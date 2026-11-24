@@ -316,8 +316,8 @@ final class MapLabelView: MKAnnotationView {
         super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
         isUserInteractionEnabled = false
         canShowCallout = false
-        collisionMode = .none
-        displayPriority = .required
+        // Namen verdrängen sich gegenseitig, statt übereinander zu liegen (große Namen gewinnen)
+        collisionMode = .rectangle
         label.numberOfLines = 2
         label.textAlignment = .center
         addSubview(label)
@@ -334,6 +334,7 @@ final class MapLabelView: MKAnnotationView {
     private func configure() {
         guard let a = annotation as? MapLabel else { return }
         let t = a.data.tier
+        displayPriority = MKFeatureDisplayPriority(rawValue: t == 1 ? 990 : t == 2 ? 700 : 450)
         let size: CGFloat = t == 1 ? 19 : t == 2 ? 12.5 : 10.5
         let weight: UIFont.Weight = t == 1 ? .black : t == 2 ? .heavy : .semibold
         let font = UIFont.systemFont(ofSize: size, weight: weight, width: .condensed)

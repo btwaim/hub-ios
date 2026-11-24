@@ -7,9 +7,9 @@ const src = path.join(__dirname, '..', 'Hub', 'Resources', 'leonida.json');
 const d = JSON.parse(fs.readFileSync(src, 'utf8'));
 
 // große Namen wie auf der Spielkarte
-const REGIONS = new Set(['Vice City', 'Port Gellhorn', 'Ambrosia', 'Key Lento', 'Hamlet', 'Mariana County', 'Kelly County',
-  'Lummox County', 'Vice-Dale County', 'Leonard County', 'Grassrivers', 'Mount Kalaga', 'Lake Leonida', 'Leonida Keys']);
-const SKIP = new Set(['Leonida', '']);
+const REGIONS = new Set(['Vice City', 'Port Gellhorn', 'Ambrosia', 'Key Lento', 'Hamlet', 'Grassrivers', 'Mount Kalaga', 'Lake Leonida', 'Leonida Keys']);
+// Bezirke (County) stehen nicht auf der Spielkarte und überlagern die Städte
+const SKIP = new Set(['Leonida', '', 'Mariana County', 'Kelly County', 'Lummox County', 'Vice-Dale County', 'Leonard County']);
 const STREET = /\b(ave|st|dr|blvd|rd|hwy|route|way|ln|ct|pkwy|cswy|causeway|street|avenue|drive|road)\b|^(sw|nw|ne|se|n|s|e|w)\s\d/i;
 
 const groups = new Map();
