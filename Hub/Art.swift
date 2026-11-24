@@ -66,15 +66,18 @@ actor ArtStore {
     /// Kleine Fassung fürs Widget / die Dynamic Island in den App-Group-Ordner legen
     func exportThumb(_ t: Track) async -> String? {
         guard let img = await image(for: t), let dir = AppGroup.container else { return nil }
-        let name = "art-\(t.id).jpg"
+        // klein halten: Live-Aktivitäten/Dynamic Island zeichnen zu große Bilder gar nicht (grauer Kreis)
+        let name = "thumb-\(t.id).jpg"
         let target = dir.appendingPathComponent(name)
         if !FileManager.default.fileExists(atPath: target.path) {
-            let size = CGSize(width: 300, height: 300)
-            let thumb = UIGraphicsImageRenderer(size: size).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
-            try? thumb.jpegData(compressionQuality: 0.85)?.write(to: target)
-            // alte Cover-Dateien aufräumen (auch die alten „cover-“-Dateien mit teils falschen Bildern)
+            let size = CGSize(width: 120, height: 120)
+            let format = UIGraphicsImageRendererFormat()
+            format.scale = 1
+            let thumb = UIGraphicsImageRenderer(size: size, format: format).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
+            try? thumb.jpegData(compressionQuality: 0.75)?.write(to: target)
+            // alte Cover-Dateien aufräumen
             if let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
-                for f in files where (f.hasPrefix("cover-") || f.hasPrefix("art-")) && f != name {
+                for f in files where (f.hasPrefix("cover-") || f.hasPrefix("art-") || f.hasPrefix("thumb-")) && f != name {
                     try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
                 }
             }

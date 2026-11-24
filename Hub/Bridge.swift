@@ -12,14 +12,16 @@ final class LiveActivityManager {
 
     func update(_ state: NowPlayingAttributes.ContentState) {
         guard ActivityAuthorizationInfo().areActivitiesEnabled else { return }
-        if state == last { return }
-        last = state
         let content = ActivityContent(state: state, staleDate: nil)
         if let a = activity ?? Activity<NowPlayingAttributes>.activities.first, a.activityState == .active {
+            if state == last { return }
+            last = state
             activity = a
             Task { await a.update(content) }
         } else {
+            // Starten klappt nur, wenn die App im Vordergrund ist – sonst beim nächsten Mal erneut versuchen
             activity = try? Activity.request(attributes: NowPlayingAttributes(), content: content, pushType: nil)
+            last = activity == nil ? nil : state
         }
     }
 

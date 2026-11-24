@@ -30,6 +30,9 @@ final class Lyrics: ObservableObject {
         if trackID == t.id { lines = r.lines ?? []; plain = r.plain }
     }
 
+    /// nur Vorführmodus
+    func demo(_ id: String, _ l: [LyricLine]) { trackID = id; lines = l }
+
     /// Songs sind im Hub-Tempo gerendert → Lyrics-Zeit = Wiedergabezeit × Tempo
     func index(at seconds: Double, rate: Double) -> Int? {
         let ms = seconds * 1000 * rate
@@ -92,6 +95,9 @@ final class Alarms: ObservableObject {
         }
         await reschedule()
     }
+
+    /// nur Vorführmodus
+    func demo(_ d: [WakeDay]) { days = d }
 
     /// Nach dem Kurzbefehl / Hintergrund-Abruf: Tage aus dem eigenen Stundenplan übernehmen
     func refreshFromSchool() async {

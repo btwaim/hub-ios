@@ -26,7 +26,7 @@ struct HomeView: View {
     @EnvironmentObject var nav: Nav
     @ObservedObject private var school = School.shared
     @State private var showSettings = false
-    @State private var showMap = false
+
     @State private var showDL = false
 
     private var state: HubState? { library.hub }
@@ -110,7 +110,7 @@ struct HomeView: View {
             .sheet(isPresented: $nav.showAlarms) { AlarmView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
             .sheet(isPresented: $showDL) { DownloaderView() }
-            .fullScreenCover(isPresented: $showMap) { GTAMapScreen() }
+            .fullScreenCover(isPresented: $nav.showMap) { GTAMapScreen() }
         }
     }
 
@@ -164,7 +164,7 @@ struct HomeView: View {
 
     private var quick: some View {
         HStack(spacing: 10) {
-            quickButton("GTA-Karte", "map.fill", [.pink, .orange]) { showMap = true }
+            quickButton("GTA-Karte", "map.fill", [.pink, .orange]) { nav.showMap = true }
             quickButton("Downloader", "arrow.down.circle.fill", [.purple, .blue]) { showDL = true }
             quickButton("Wecker", "alarm.fill", [.orange, .yellow]) { nav.showAlarms = true }
         }
@@ -342,7 +342,7 @@ struct HomeView: View {
     }
 
     private func gtaCard(_ g: String) -> some View {
-        Button { showMap = true } label: {
+        Button { nav.showMap = true } label: {
             ZStack(alignment: .bottomLeading) {
                 LinearGradient(colors: [Color(red: 1, green: 0.35, blue: 0.55), Color(red: 1, green: 0.62, blue: 0.25), Color(red: 0.35, green: 0.15, blue: 0.6)],
                                startPoint: .topTrailing, endPoint: .bottomLeading)

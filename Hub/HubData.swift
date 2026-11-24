@@ -117,15 +117,22 @@ struct RemoteImage: View {
     @State private var image: UIImage?
 
     var body: some View {
-        ZStack {
-            Rectangle().fill(Color.white.opacity(0.07))
-            if let image {
-                Image(uiImage: image).resizable().scaledToFill()
-            } else {
-                Image(systemName: icon).foregroundStyle(.white.opacity(0.3))
+        // Bild als Overlay: nimmt genau den angebotenen Platz ein und wird zugeschnitten (bläht das Layout nie auf)
+        Rectangle().fill(Color.white.opacity(0.07))
+            .overlay {
+                if let image {
+                    Image(uiImage: image).resizable().scaledToFill()
+                } else {
+                    Image(systemName: icon).foregroundStyle(.white.opacity(0.3))
+                }
             }
-        }
-        .task(id: url) { image = await CoverCache.shared.image(for: url) }
+            .clipped()
+            .task(id: url) {
+                let u = url
+                let img = await CoverCache.shared.image(for: u)
+                guard !Task.isCancelled, u == url else { return }
+                image = img
+            }
     }
 }
 

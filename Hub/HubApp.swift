@@ -6,6 +6,7 @@ final class Nav: ObservableObject {
     static let shared = Nav()
     @Published var showPlayer = false
     @Published var showAlarms = false
+    @Published var showMap = false
     @Published var tab = 0
 }
 
@@ -17,13 +18,14 @@ struct HubApp: App {
     @ObservedObject private var alarms = Alarms.shared
     @ObservedObject private var nav = Nav.shared
     @ObservedObject private var hub = HubStore.shared
-    @State private var setUp = Config.isSetUp
+    @State private var setUp = Config.isSetUp || Demo.screen != nil
     @Environment(\.scenePhase) private var phase
 
     init() {
         // Player sofort bereit – auch wenn iOS die App nur im Hintergrund für einen Widget-Knopf startet
         Player.shared.library = Library.shared
         Player.shared.lyrics = Lyrics.shared
+        Demo.setup()
     }
 
     var body: some Scene {
@@ -72,6 +74,7 @@ struct HubApp: App {
     /// Beim Öffnen: Playlist + fehlende Songs vom PC, Weckzeiten, Lyrics vorab (alles nur, wenn der PC erreichbar ist)
     @MainActor
     private func start() async {
+        guard Demo.screen == nil else { return }
         await library.refresh()
         await hub.refresh()
         await alarms.refresh()

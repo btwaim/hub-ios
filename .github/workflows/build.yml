@@ -39,3 +39,29 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "build-${{ github.run_number }}" Hub.ipa --title "Hub ${{ github.run_number }}" --notes "Automatischer Build" --latest
+
+  # Prüfung: App im iPhone-Simulator starten und Screenshots machen (Layout, Player, Dynamic Island)
+  screens:
+    runs-on: macos-26
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - name: Projekt erzeugen
+        run: brew install xcodegen && xcodegen generate
+      - name: Für den Simulator bauen
+        run: |
+          set -o pipefail
+          xcodebuild -project Hub.xcodeproj -scheme Hub -configuration Debug -sdk iphonesimulator \
+            -destination 'generic/platform=iOS Simulator' -derivedDataPath simbuild \
+            CODE_SIGNING_ALLOWED=NO build 2>&1 | tee sim.log | grep -E "error:|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" sim.log
+      - name: Screenshots
+        run: bash tools/screens.sh
+      - name: Screenshots hochladen
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screens
+          path: |
+            screens
+            sim.log

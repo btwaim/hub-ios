@@ -149,6 +149,23 @@ final class Player: ObservableObject {
         pushSurfaces(track: true)
     }
 
+    /// nur Vorführmodus: Song „läuft“, ohne Ton
+    func demo(_ t: Track, at seconds: Double) {
+        current = t
+        baked = t.fx ?? Fx(rate: 1, bass: 0, reverb: false)
+        bakedRate = baked.rate ?? 1
+        duration = (t.duration ?? 0) / 1000 / bakedRate
+        time = seconds
+        lyricIndex = lyrics?.index(at: seconds, rate: bakedRate)
+        isPlaying = true
+        loadArtwork(t)
+        pushSurfaces(track: true)
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(3))
+            pushSurfaces(track: true)
+        }
+    }
+
     func toggle() {
         if current == nil {
             if let first = firstToPlay() { play(first) }

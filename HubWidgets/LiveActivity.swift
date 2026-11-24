@@ -19,18 +19,16 @@ struct CoverThumb: View {
     var corner: CGFloat
 
     var body: some View {
-        Group {
-            if let f = file, let img = AppGroup.image(f) {
-                Image(uiImage: img).resizable().scaledToFill()
-            } else {
-                ZStack {
-                    LinearGradient(colors: [hubPurple, Color(red: 0.25, green: 0.1, blue: 0.5)], startPoint: .topLeading, endPoint: .bottomTrailing)
+        LinearGradient(colors: [hubPurple, Color(red: 0.25, green: 0.1, blue: 0.5)], startPoint: .topLeading, endPoint: .bottomTrailing)
+            .overlay {
+                if let f = file, let img = AppGroup.image(f) {
+                    Image(uiImage: img).resizable().scaledToFill()
+                } else {
                     Image(systemName: "music.note").font(.system(size: size * 0.4, weight: .bold)).foregroundStyle(.white)
                 }
             }
-        }
-        .frame(width: size, height: size)
-        .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .frame(width: size, height: size)
+            .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
     }
 }
 
@@ -40,18 +38,19 @@ struct CoverGlow: View {
     var dim: Double = 0.45
 
     var body: some View {
-        ZStack {
-            Color.black
-            if let f = file, let img = AppGroup.image(f) {
-                Image(uiImage: img).resizable().scaledToFill()
-                    .blur(radius: 28)
-                    .saturation(1.5)
-                    .opacity(0.9)
-            } else {
-                LinearGradient(colors: [Color(red: 0.22, green: 0.08, blue: 0.42), .black], startPoint: .topLeading, endPoint: .bottomTrailing)
+        Color.black
+            .overlay {
+                if let f = file, let img = AppGroup.image(f) {
+                    Image(uiImage: img).resizable().scaledToFill()
+                        .blur(radius: 22)
+                        .saturation(1.5)
+                        .opacity(0.9)
+                } else {
+                    LinearGradient(colors: [Color(red: 0.22, green: 0.08, blue: 0.42), .black], startPoint: .topLeading, endPoint: .bottomTrailing)
+                }
             }
-            Color.black.opacity(dim)
-        }
+            .overlay { Color.black.opacity(dim) }
+            .clipped()
     }
 }
 
@@ -185,7 +184,12 @@ struct NowPlayingLiveActivity: Widget {
             } compactTrailing: {
                 Bars(playing: s.isPlaying)
             } minimal: {
-                CoverThumb(file: s.coverFile, size: 22, corner: 11)
+                // kleiner Kreis (wenn noch etwas anderes in der Insel ist): Lyrics-Symbol statt Bild – wird immer gezeichnet
+                Image(systemName: s.lyric.isEmpty ? "music.note" : "quote.bubble.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 24, height: 24)
+                    .background(hubPurple, in: Circle())
             }
             .keylineTint(hubPurple)
             .widgetURL(URL(string: "hubapp://player"))

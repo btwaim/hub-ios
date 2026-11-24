@@ -40,18 +40,23 @@ struct CoverBackdrop: View {
     @State private var shownID: String?
 
     var body: some View {
-        ZStack {
-            Color.black
-            if let image, shownID == track?.id {
-                Image(uiImage: image).resizable().scaledToFill()
-                    .blur(radius: 80, opaque: true)
-                    .saturation(1.5)
-                    .opacity(0.8)
-                    .transition(.opacity)
+        // Wichtig: Das Bild liegt als Overlay auf einer Fläche – so bestimmt es NICHT die Größe
+        // (sonst wird der Player breiter als der Bildschirm und man sieht nur die linke Hälfte)
+        Color.black
+            .overlay {
+                if let image, shownID == track?.id {
+                    Image(uiImage: image).resizable().scaledToFill()
+                        .blur(radius: 80, opaque: true)
+                        .saturation(1.5)
+                        .opacity(0.8)
+                        .transition(.opacity)
+                }
             }
-            LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.35), .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
-        }
-        .ignoresSafeArea()
+            .overlay {
+                LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.35), .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
+            }
+            .clipped()
+            .ignoresSafeArea()
         .animation(.easeInOut(duration: 0.7), value: shownID)
         .task(id: track?.id) {
             guard let t = track else { image = nil; shownID = nil; return }
@@ -126,9 +131,8 @@ struct PlayerView: View {
 
     var body: some View {
         GeometryReader { geo in
-            let side = min(geo.size.width - 72, geo.size.height * 0.4, 330)
-            ZStack {
-                CoverBackdrop(track: player.current)
+            let side = max(120, min(geo.size.width - 72, geo.size.height * 0.4, 330))
+            VStack(spacing: 0) {
                 VStack(spacing: 0) {
                     Capsule().fill(Color.white.opacity(0.3)).frame(width: 36, height: 5).padding(.top, 8)
                     switch mode {
@@ -158,8 +162,11 @@ struct PlayerView: View {
                 .padding(.horizontal, 28)
                 .padding(.bottom, 12)
             }
+            // fest auf die Bildschirmgröße – nichts darf breiter werden
+            .frame(width: geo.size.width, height: geo.size.height)
             .foregroundStyle(.white)
         }
+        .background { CoverBackdrop(track: player.current) }
         .task(id: player.current?.id) { await lyrics.load(player.current) }
         .sheet(isPresented: $showFx) {
             FxSheet()
@@ -169,14 +176,20 @@ struct PlayerView: View {
         }
     }
 
+    /// Speed / Bass / Hall – gut sichtbar als Knopf mit Text
     private var fxButton: some View {
         Button { showFx = true } label: {
-            Image(systemName: "slider.horizontal.3")
-                .font(.system(size: 16, weight: .semibold))
-                .frame(width: 34, height: 34)
-                .background(Color.white.opacity(player.currentFx.label.isEmpty ? 0.12 : 0.28), in: Circle())
+            HStack(spacing: 5) {
+                Image(systemName: "slider.horizontal.3")
+                Text("Sound")
+            }
+            .font(.system(size: 14, weight: .bold))
+            .padding(.horizontal, 12)
+            .frame(height: 34)
+            .background(player.currentFx.label.isEmpty ? Color.white.opacity(0.16) : Color.purple.opacity(0.85), in: Capsule())
         }
         .buttonStyle(.plain)
+        .accessibilityLabel("Speed, Bass und Hall einstellen")
     }
 
     private var titleRow: some View {

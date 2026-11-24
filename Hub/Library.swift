@@ -180,6 +180,10 @@ final class Library: ObservableObject {
         }
     }
 
+    /// nur Vorführmodus (Simulator-Screenshots)
+    func demo(_ t: [Track]) { tracks = t }
+    func demoHub(_ s: HubState) { hub = s }
+
     /// Alles neu laden (z. B. wenn etwas kaputt ist)
     func clearOffline() {
         for name in offline { try? FileManager.default.removeItem(at: songs.appendingPathComponent(name)) }
