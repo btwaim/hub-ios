@@ -6,10 +6,15 @@ struct HubState: Codable {
     struct Lesson: Codable, Hashable { let start: String?; let subject: String?; let room: String?; let kind: String? }
     struct School: Codable, Hashable { let label: String?; let lessons: [Lesson]? }
     struct Show: Codable, Hashable, Identifiable { let id: String; let title: String; let image: String?; let progress: String?; let pct: Double?; let newEp: Bool? }
+    struct Exam: Codable, Hashable { let title: String; let when: String? }
+    struct Ev: Codable, Hashable { let title: String; let type: String?; let when: String? }
     let greeting: String?
     let sleep: String?
     let school: School?
     let watch: [Show]?
+    let gta: String?
+    let nextExam: Exam?
+    let events: [Ev]?
 }
 
 /// Playlist + Offline-Speicher. Songs kommen vom Hub schon im Hub-Sound (Bass/Tempo/Hall eingerechnet).

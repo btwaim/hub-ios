@@ -8,11 +8,14 @@ struct RootView: View {
     @Namespace private var ns
 
     var body: some View {
-        TabView {
-            Tab("Musik", systemImage: "music.note") { MusicView() }
-            Tab("Wecker", systemImage: "alarm") { AlarmView() }
-            Tab("Mehr", systemImage: "gearshape") { SettingsView() }
+        TabView(selection: $nav.tab) {
+            Tab("Start", systemImage: "house.fill", value: 0) { HomeView() }
+            Tab("Musik", systemImage: "music.note", value: 1) { MusicView() }
+            Tab("Kalender", systemImage: "calendar", value: 2) { CalendarView() }
+            Tab("Watchlist", systemImage: "play.tv.fill", value: 3) { WatchlistView() }
+            Tab("Gaming", systemImage: "gamecontroller.fill", value: 4) { GamingView() }
         }
+        .overlay { ToastOverlay() }
         .tabViewBottomAccessory {
             MiniPlayer()
                 .matchedTransitionSource(id: "player", in: ns)

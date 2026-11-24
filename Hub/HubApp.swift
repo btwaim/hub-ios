@@ -5,6 +5,7 @@ import SwiftUI
 final class Nav: ObservableObject {
     static let shared = Nav()
     @Published var showPlayer = false
+    @Published var tab = 0
 }
 
 @main
@@ -14,6 +15,7 @@ struct HubApp: App {
     @ObservedObject private var lyrics = Lyrics.shared
     @ObservedObject private var alarms = Alarms.shared
     @ObservedObject private var nav = Nav.shared
+    @ObservedObject private var hub = HubStore.shared
     @State private var setUp = Config.isSetUp
     @Environment(\.scenePhase) private var phase
 
@@ -37,10 +39,12 @@ struct HubApp: App {
             .environmentObject(lyrics)
             .environmentObject(alarms)
             .environmentObject(nav)
+            .environmentObject(hub)
             .tint(.purple)
             .preferredColorScheme(.dark)
             .onOpenURL { url in
                 if url.scheme == "hubapp", url.host == "player" { nav.showPlayer = true; return }
+                if url.scheme == "hubapp", url.host == "watch" { nav.tab = 3; return }
                 if Config.apply(link: url) { setUp = true; Task { await start() } }
             }
             .task { if setUp { await start() } }
@@ -54,6 +58,7 @@ struct HubApp: App {
     @MainActor
     private func start() async {
         await library.refresh()
+        await hub.refresh()
         await alarms.refresh()
         if library.pcOnline { await lyrics.prefetch(library.tracks) }
     }

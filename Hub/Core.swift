@@ -1,5 +1,6 @@
 import Foundation
 import UIKit
+import CryptoKit
 
 // MARK: - Verbindung zum Hub (Adresse + Schlüssel kommen per QR-Code / Link, nichts davon steht im Code)
 
@@ -217,7 +218,9 @@ actor CoverCache {
     func image(for string: String?) async -> UIImage? {
         guard let string, let url = URL(string: string) else { return nil }
         if let m = memory[string] { return m }
-        let file = dir.appendingPathComponent(url.lastPathComponent)
+        // eindeutiger Name aus der ganzen Adresse (Steam-Bilder heißen z. B. alle „header.jpg“)
+        let digest = SHA256.hash(data: Data(string.utf8)).prefix(12).map { String(format: "%02x", $0) }.joined()
+        let file = dir.appendingPathComponent(digest + ".img")
         if let data = try? Data(contentsOf: file), let img = UIImage(data: data) {
             memory[string] = img
             return img
