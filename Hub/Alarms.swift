@@ -31,12 +31,36 @@ final class Alarms: ObservableObject {
         didSet { UserDefaults.standard.set(lightLead, forKey: "lightLead") }
     }
 
-    /// Uhrzeiten für die Licht-Automationen (Weckzeit − Licht-Vorlauf)
-    var lightAutomationTimes: [String] {
+    /// Nach wie vielen Minuten (ab Weckzeit) das Aufstehlicht von selbst ausgeht
+    @Published var lightOff: Int = UserDefaults.standard.object(forKey: "lightOff") as? Int ?? 10 {
+        didSet { UserDefaults.standard.set(lightOff, forKey: "lightOff") }
+    }
+    /// gewählte WiZ-Lampen (IDs); leer = die im Hub als „meine“ markierten
+    @Published var lightLamps: [String] = UserDefaults.standard.stringArray(forKey: "lightLamps") ?? [] {
+        didSet { UserDefaults.standard.set(lightLamps, forKey: "lightLamps") }
+    }
+    @Published private(set) var lightTestResult: String?
+
+    private func shifted(_ minutes: Int) -> [String] {
         let f = DateFormatter()
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "HH:mm"
-        return Alarms.ruleTimes.compactMap { f.date(from: $0).map { f.string(from: $0.addingTimeInterval(Double(-lightLead) * 60)) } }
+        return Alarms.ruleTimes.compactMap { f.date(from: $0).map { f.string(from: $0.addingTimeInterval(Double(minutes) * 60)) } }
+    }
+    /// Uhrzeiten für die Licht-Automationen: an (Weckzeit − Vorlauf) und aus (Weckzeit + Aus-nach)
+    var lightAutomationTimes: [String] { shifted(-lightLead) }
+    var lightOffTimes: [String] { shifted(lightOff) }
+
+    /// alle WiZ-Lampen, die der Hub kennt (zuletzt vom PC geladen)
+    var knownLamps: [HubData.Lamp] { HubStore.shared.data?.lamps ?? [] }
+    var activeLamps: [HubData.Lamp] {
+        let all = knownLamps
+        return lightLamps.isEmpty ? all.filter { $0.mine == true } : all.filter { lightLamps.contains($0.id) }
+    }
+    func toggleLamp(_ l: HubData.Lamp) {
+        var sel = lightLamps.isEmpty ? knownLamps.filter { $0.mine == true }.map(\.id) : lightLamps
+        if let i = sel.firstIndex(of: l.id) { sel.remove(at: i) } else { sel.append(l.id) }
+        lightLamps = sel.isEmpty ? ["-"] : sel   // „-“ = bewusst keine Lampe
     }
 
     @Published private(set) var days: [WakeDay] = Store.load([WakeDay].self, "wake.json") ?? []
@@ -157,36 +181,54 @@ final class Alarms: ObservableObject {
         else if status.isEmpty || status.hasPrefix("Wecker aus") { status = "Keine Schultage mit Weckzeit gefunden" }
     }
 
-    // MARK: Aufstehlicht
+    // MARK: Aufstehlicht (WiZ, direkt vom iPhone)
 
-    /// Für den Kurzbefehl: Klingelt der Wecker in den nächsten ~20 Minuten? Holt vorher den frischen Stundenplan
-    /// (so wird eine spontan ausgefallene 1. Stunde noch berücksichtigt) und stellt die Wecker neu.
-    func lightCheck() async -> Bool {
+    /// letzter Wecker, der schon geklingelt hat (für „Licht wieder aus“)
+    private var lastRang: Date? {
+        days.compactMap(\.wakeDate).filter { $0 <= Date() }.max()
+    }
+
+    /// Für die Automation: kurz vor dem Wecker → WiZ „Aufwachen“ an, ein paar Minuten nach dem Wecker → aus.
+    /// Holt vorher den frischen Stundenplan (spontan ausgefallene 1. Stunde zählt also mit) und stellt die Wecker neu.
+    func lightCheck() async -> String {
         if School.shared.connected {
             await School.shared.refresh()
             await refreshFromSchool()
         }
+        let ips = activeLamps.map(\.ip)
         var on = false
         var note: String
-        if let t = lightTestUntil, t > Date() {
-            on = true
-            note = "Test: Licht an"
-        } else if let n = next {
-            let mins = n.at.timeIntervalSinceNow / 60
-            // Automation läuft „Licht-Vorlauf“ Minuten vor der Weckzeit; etwas Spielraum, falls iOS sie später startet
-            on = enabled && mins >= Double(lightLead) - 8 && mins <= Double(lightLead) + 8
-            let time = n.at.formatted(date: .omitted, time: .shortened)
-            note = on ? "Wecker \(time) → Aufstehlicht an" : "Wecker erst \(time) – noch kein Licht"
+        if ips.isEmpty {
+            note = "Keine WiZ-Lampe gewählt (Hub → Wecker → Aufstehlicht)"
+        } else if let t = lightTestUntil, t > Date() {
+            let n = await WiZ.wake(ips); on = true
+            note = "Test: Aufwachen an (\(n)/\(ips.count) Lampen)"
+        } else if let n = next, enabled, abs(n.at.timeIntervalSinceNow / 60 - Double(lightLead)) <= 8 {
+            let ok = await WiZ.wake(ips); on = true
+            note = "Wecker \(n.at.formatted(date: .omitted, time: .shortened)) → Aufwachen an (\(ok)/\(ips.count) Lampen)"
+        } else if let r = lastRang, abs(-r.timeIntervalSinceNow / 60 - Double(lightOff)) <= 8 {
+            let ok = await WiZ.off(ips)
+            note = "Wecker war \(r.formatted(date: .omitted, time: .shortened)) → Licht aus (\(ok)/\(ips.count) Lampen)"
         } else {
-            note = "Kein Wecker geplant – kein Licht"
+            note = next.map { "Wecker erst \($0.at.formatted(date: .omitted, time: .shortened)) – nichts zu tun" } ?? "Kein Wecker geplant – nichts zu tun"
         }
         let c = LightCheck(at: Date(), on: on, note: note)
         lastLight = c
         Store.save(c, "lightcheck.json")
-        return on
+        return note
     }
 
-    /// 10 Minuten lang sagt die Prüfung „an“ → Kurzbefehl einmal von Hand starten zum Testen
+    /// Test direkt in der App (fragt beim ersten Mal nach „Lokales Netzwerk“)
+    func testLight(_ wake: Bool) async {
+        let ips = activeLamps.map(\.ip)
+        guard !ips.isEmpty else { lightTestResult = "Keine Lampe gewählt"; return }
+        var ok = 0
+        if wake { ok = await WiZ.wake(ips) } else { ok = await WiZ.off(ips) }
+        lightTestResult = ok == 0 ? "Keine Antwort – iPhone im selben WLAN? In der WiZ-App „Lokale Kommunikation“ an? Hub darf aufs lokale Netzwerk?"
+                                  : "\(ok)/\(ips.count) Lampen: \(wake ? "Aufwachen an" : "aus")"
+    }
+
+    /// 10 Minuten lang schaltet die Automation sofort an (zum Testen mit der echten Automation)
     func startLightTest() {
         let until = Date().addingTimeInterval(600)
         lightTestUntil = until
@@ -194,15 +236,16 @@ final class Alarms: ObservableObject {
     }
 }
 
-// MARK: - Kurzbefehl-Aktion für das WiZ-Aufstehlicht
+// MARK: - Kurzbefehl-Aktion für das WiZ-Aufstehlicht (direkt in der Automation auswählbar, kein eigener Kurzbefehl nötig)
 
 struct WakeLightIntent: AppIntent {
-    static var title: LocalizedStringResource = "Aufstehlicht prüfen"
-    static var description = IntentDescription("Ja, wenn dein Hub-Wecker in den nächsten Minuten klingelt (holt dafür den aktuellen Stundenplan, auch ohne PC). Danach im Kurzbefehl dein WiZ-Aufstehlicht einschalten.")
+    static var title: LocalizedStringResource = "Aufstehlicht"
+    static var description = IntentDescription("Schaltet kurz vor deinem Hub-Wecker das WiZ-„Aufwachen“ ein und ein paar Minuten nach dem Wecker wieder aus. Holt dafür den aktuellen Stundenplan, auch ohne PC.")
     static var openAppWhenRun: Bool = false
 
-    func perform() async throws -> some IntentResult & ReturnsValue<Bool> {
-        let on = await Alarms.shared.lightCheck()
-        return .result(value: on)
+    func perform() async throws -> some IntentResult & ReturnsValue<String> {
+        let note = await Alarms.shared.lightCheck()
+        return .result(value: note)
     }
 }
+

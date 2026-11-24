@@ -75,23 +75,43 @@ struct AlarmView: View {
                 }
 
                 Section {
+                    if alarms.knownLamps.isEmpty {
+                        Label("Noch keine Lampen – einmal die App öffnen, während der PC an ist", systemImage: "lightbulb.slash").font(.footnote).foregroundStyle(.secondary)
+                    }
+                    ForEach(alarms.knownLamps, id: \.id) { l in
+                        let on = alarms.activeLamps.contains(l)
+                        Button { alarms.toggleLamp(l) } label: {
+                            HStack {
+                                Image(systemName: on ? "checkmark.circle.fill" : "circle").foregroundStyle(on ? Color.yellow : Color.secondary)
+                                VStack(alignment: .leading, spacing: 1) {
+                                    Text(l.name + (l.mine == true ? " (deine)" : "")).font(.body)
+                                    Text(l.ip).font(.caption.monospacedDigit()).foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
                     Picker("Licht startet", selection: $alarms.lightLead) {
-                        Text("10 Min").tag(10)
+                        Text("10 Min vorher").tag(10)
                         Text("20 Min").tag(20)
                         Text("30 Min").tag(30)
                     }
-                    .pickerStyle(.segmented)
-                    Text("Automationen um \(alarms.lightAutomationTimes.joined(separator: ", ")) Uhr")
-                        .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+                    Picker("Geht aus", selection: $alarms.lightOff) {
+                        Text("5 Min nach dem Wecker").tag(5)
+                        Text("10 Min").tag(10)
+                        Text("15 Min").tag(15)
+                    }
+                    HStack(spacing: 10) {
+                        Button { Task { await alarms.testLight(true) } } label: { Label("Aufwachen testen", systemImage: "sunrise.fill") }
+                            .buttonStyle(.bordered).tint(.yellow)
+                        Button { Task { await alarms.testLight(false) } } label: { Label("Aus", systemImage: "lightbulb.slash") }
+                            .buttonStyle(.bordered)
+                    }
+                    if let r = alarms.lightTestResult { Text(r).font(.footnote).foregroundStyle(.secondary) }
                     lightStatus
-                    Button { guideOpen = true } label: { Label("Kurzbefehl einrichten – Schritt für Schritt", systemImage: "list.number") }
-                    Button {
-                        alarms.startLightTest()
-                        checkResult = "Test an: Starte jetzt in Kurzbefehle einmal „Hub Aufstehlicht“ – das Licht sollte angehen (10 Minuten lang)."
-                    } label: { Label("Licht testen", systemImage: "lightbulb.max.fill") }
-                    if let c = checkResult { Text(c).font(.footnote).foregroundStyle(.secondary) }
-                } header: { Text("Aufstehlicht (WiZ)") } footer: {
-                    Text("Empfohlen: 30 Minuten – so lange dauert die künstliche Morgendämmerung in den Studien (langsam bis ca. 200–300 Lux, Start warm/rötlich und sehr dunkel). Wenn dein WiZ-Aufstehen-Modus sofort hell ist statt langsam hochzudimmen, lieber 10 Minuten nehmen. Der Kurzbefehl holt dabei auch den frischen Stundenplan.")
+                    Button { guideOpen = true } label: { Label("Automationen einrichten – Schritt für Schritt", systemImage: "list.number") }
+                } header: { Text("Aufstehlicht (WiZ „Aufwachen“)") } footer: {
+                    Text("Hub schaltet deine WiZ-Lampe selbst: \(alarms.lightLead) Min vor dem Wecker „Aufwachen“ an (dimmt ca. 30 Min langsam von dunkel-lila bis hell), \(alarms.lightOff) Min nach dem Wecker wieder aus. Dafür braucht es Automationen um \(alarms.lightAutomationTimes.joined(separator: ", ")) und \(alarms.lightOffTimes.joined(separator: ", ")) – jeweils nur die Aktion „Aufstehlicht“ von Hub.")
                 }
 
                 Section("Nächste Tage") {
@@ -310,16 +330,14 @@ struct ShortcutGuide: View {
     @ObservedObject private var alarms = Alarms.shared
 
     private var steps: [(String, String, String)] {
-        let times = alarms.lightAutomationTimes
-        let t = times.map { "**\($0)**" }
+        let all = (alarms.lightAutomationTimes + alarms.lightOffTimes).map { "**\($0)**" }
         return [
-        ("1", "Kurzbefehl anlegen", "Kurzbefehle-App öffnen → unten **Kurzbefehle** → oben **+**."),
-        ("2", "Hub fragen", "In der Suche **Aufstehlicht prüfen** eintippen und die Aktion von **Hub** antippen."),
-        ("3", "Wenn-Abfrage", "Suche **Wenn** → antippen. Bedingung: **Aufstehlicht** · **ist** · **wahr** (bzw. „Ja“)."),
-        ("4", "WiZ einschalten", "In die **Wenn**-Klammer deine WiZ-Aktion für den **Aufstehen-Modus** ziehen – dieselbe wie in deinem bisherigen Kurzbefehl (oder **Kurzbefehl ausführen** → deinen WiZ-Kurzbefehl)."),
-        ("5", "Namen geben", "Oben auf den Namen tippen → **Hub Aufstehlicht** → Fertig."),
-        ("6", "Drei Automationen", "Unten **Automation** → **+** → **Tageszeit** → \(t.first ?? ""), **Täglich** → **Sofort ausführen** → **Hub Aufstehlicht**. Das Gleiche nochmal für \(t.dropFirst().joined(separator: " und ")) (je \(alarms.lightLead) Minuten vor 06:25, 07:25 und 08:30)."),
-        ("7", "Alte Automation aus", "Deine alte Automation „Wenn Wecker klingelt → WiZ“ ausschalten, und den alten Health-/Uhr-Wecker auch – jetzt weckt Hub."),
+        ("1", "Erst testen", "Hier in Hub → **Wecker** → **Aufwachen testen**. Beim ersten Mal fragt iOS nach **Lokales Netzwerk** → **Erlauben**. Die Lampe muss angehen (WiZ-App: Einstellungen → **Lokale Kommunikation** an)."),
+        ("2", "Automation anlegen", "Kurzbefehle-App → unten **Automation** → oben **+** → **Tageszeit**."),
+        ("3", "Uhrzeit", "Uhrzeit \(all.first ?? "") einstellen, **Täglich**, dann **Sofort ausführen** wählen → **Weiter**."),
+        ("4", "Nur eine Aktion", "**Neuer leerer Kurzbefehl** → in der Suche **Aufstehlicht** eintippen → die Aktion von **Hub** antippen → **Fertig**. Mehr braucht es nicht: Hub entscheidet selbst, ob gerade an, aus oder nichts."),
+        ("5", "Für alle Zeiten", "Das Gleiche für \(all.dropFirst().joined(separator: ", ")). Die ersten drei schalten \(alarms.lightLead) Min vor dem Wecker an, die anderen \(alarms.lightOff) Min nach dem Wecker aus."),
+        ("6", "Alte Automation aus", "Deine alte Automation „Wenn Wecker klingelt → WiZ“ ausschalten und den alten Health-/Uhr-Wecker auch – jetzt weckt Hub."),
         ]
     }
 
@@ -342,9 +360,9 @@ struct ShortcutGuide: View {
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Label("So prüfst du, ob es klappt", systemImage: "checkmark.seal.fill").font(.headline).foregroundStyle(.green)
-                        Text(.init("• In Hub → **Wecker** auf **Licht testen** tippen.\n• Dann in Kurzbefehle einmal auf **Hub Aufstehlicht** tippen → das WiZ-Licht geht an.\n• Hier unter „Zuletzt geprüft“ siehst du jeden Morgen, wann der Kurzbefehl gefragt hat und ob das Licht anging.\n• **Testwecker in 1 Minute** spielt den sanft lauter werdenden Ton."))
+                        Text(.init("• **Aufwachen testen** / **Aus** in Hub → Wecker schalten die Lampe sofort.\n• Unter „Zuletzt geprüft“ steht jeden Morgen, wann die Automation lief und was sie gemacht hat (z. B. „Wecker 06:25 → Aufwachen an“).\n• **Testwecker in 1 Minute** spielt den sanft lauter werdenden Ton."))
                             .font(.subheadline)
-                        Text("Die Prüfung sagt nur „an“, wenn der Hub-Wecker in den nächsten 2–22 Minuten klingelt. An freien Tagen bleibt das Licht aus.")
+                        Text("An freien Tagen passiert nichts. Fällt die 1. Stunde spontan aus, merkt Hub das beim Prüfen und schaltet erst vor dem späteren Wecker.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     .padding(16)
@@ -358,7 +376,7 @@ struct ShortcutGuide: View {
                 }
                 .padding(20)
             }
-            .navigationTitle("Aufstehlicht per Kurzbefehl")
+            .navigationTitle("Aufstehlicht automatisch")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Fertig") { dismiss() } } }
         }

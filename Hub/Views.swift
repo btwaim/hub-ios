@@ -50,7 +50,7 @@ struct CoverImage: View {
         }
         .task(id: url) {
             let u = url
-            let img = await CoverCache.shared.image(for: u)
+            let img = await CoverCache.shared.image(for: u, px: (size ?? 200) * 3)
             guard !Task.isCancelled, u == url else { return }
             image = img
             shownURL = u
@@ -234,7 +234,7 @@ struct MiniPlayer: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            HDCover(track: player.current, corner: 8).frame(width: 34, height: 34)
+            HDCover(track: player.current, corner: 8, px: 120).frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 0) {
                 Text(player.current?.title ?? "Nichts läuft").font(.subheadline.weight(.semibold)).lineLimit(1)
                 Text(player.current?.artist ?? "Tippe einen Song an").font(.caption).foregroundStyle(.secondary).lineLimit(1)

@@ -39,6 +39,8 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSAlarmKitUsageDescription: "Hub stellt deine Wecker passend zum Stundenplan."
         NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        NSLocalNetworkUsageDescription: "Hub schaltet damit deine WiZ-Lampen (Aufstehlicht) direkt im WLAN."
         NSPhotoLibraryAddUsageDescription: "Hub sichert heruntergeladene Videos und Bilder in deiner Fotos-App."
         UIFileSharingEnabled: true
         LSSupportsOpeningDocumentsInPlace: true

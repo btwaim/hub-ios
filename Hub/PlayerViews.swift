@@ -6,6 +6,8 @@ import AVKit
 struct HDCover: View {
     let track: Track?
     var corner: CGFloat = 18
+    /// Zielgröße in Pixeln (kleine Anzeigen bekommen eine verkleinerte Fassung → flüssiges Scrollen)
+    var px: CGFloat = 1000
     @EnvironmentObject var library: Library
     @State private var image: UIImage?
     @State private var shownID: String?
@@ -25,7 +27,7 @@ struct HDCover: View {
             .task(id: track?.id) {
                 guard let t = track else { image = nil; shownID = nil; return }
                 let id = t.id
-                let img = await ArtStore.shared.image(for: t, allowNetwork: library.pcOnline)
+                let img = await ArtStore.shared.thumb(for: t, px: px, allowNetwork: library.pcOnline)
                 guard !Task.isCancelled, track?.id == id else { return }
                 image = img
                 shownID = img == nil ? nil : id
@@ -45,8 +47,9 @@ struct CoverBackdrop: View {
         Color.black
             .overlay {
                 if let image, shownID == track?.id {
+                    // winziges Bild (96 px) unscharf hochgezogen: sieht gleich aus, kostet beim Scrollen fast nichts
                     Image(uiImage: image).resizable().scaledToFill()
-                        .blur(radius: 80, opaque: true)
+                        .blur(radius: 40, opaque: true)
                         .saturation(1.5)
                         .opacity(0.8)
                         .transition(.opacity)
@@ -61,7 +64,7 @@ struct CoverBackdrop: View {
         .task(id: track?.id) {
             guard let t = track else { image = nil; shownID = nil; return }
             let id = t.id
-            let img = await ArtStore.shared.image(for: t, allowNetwork: false)
+            let img = await ArtStore.shared.thumb(for: t, px: 96, allowNetwork: false)
             guard !Task.isCancelled, track?.id == id else { return }
             image = img
             shownID = id
@@ -215,7 +218,7 @@ struct PlayerView: View {
 
     private var compactHeader: some View {
         HStack(spacing: 12) {
-            HDCover(track: player.current, corner: 8).frame(width: 52, height: 52)
+            HDCover(track: player.current, corner: 8, px: 170).frame(width: 52, height: 52)
                 .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
             VStack(alignment: .leading, spacing: 2) {
                 Text(player.current?.title ?? "").font(.headline).lineLimit(1)

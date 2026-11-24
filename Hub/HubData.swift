@@ -42,10 +42,12 @@ struct HubData: Codable {
         var currentBoss: Boss? { bosses.first { $0.id == bossId && !$0.defeated } }
         var shownDeaths: Int { currentBoss?.deaths ?? deaths }
     }
+    struct Lamp: Codable, Hashable { let id: String; let name: String; let ip: String; let mine: Bool? }
     var events: [Event]
     var media: [Media]
     var games: [Game]
     var active: String?
+    var lamps: [Lamp]?
 
     var activeGame: Game? { games.first { $0.id == active } }
 }
@@ -129,7 +131,7 @@ struct RemoteImage: View {
             .clipped()
             .task(id: url) {
                 let u = url
-                let img = await CoverCache.shared.image(for: u)
+                let img = await CoverCache.shared.image(for: u, px: 500)
                 guard !Task.isCancelled, u == url else { return }
                 image = img
             }

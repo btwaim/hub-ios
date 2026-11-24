@@ -20,6 +20,8 @@ final class Player: ObservableObject {
     /// Tempo, das schon in der gespielten Datei steckt (für die Lyrics-Zeit)
     @Published private(set) var bakedRate: Double = 1
     @Published private(set) var lyricIndex: Int?
+    /// Zeile für Sperrbildschirm/Dynamic Island (mit kleinem Vorlauf)
+    private var surfaceIndex: Int?
     @Published var shuffle: Bool = UserDefaults.standard.bool(forKey: "shuffle") {
         didSet { UserDefaults.standard.set(shuffle, forKey: "shuffle"); rebuildOrder(keep: current) }
     }
@@ -142,6 +144,7 @@ final class Player: ObservableObject {
         time = start
         duration = (t.duration ?? 0) / 1000 / max(fx.rate ?? 1, 0.1)
         lyricIndex = nil
+        surfaceIndex = nil
         UserDefaults.standard.set(t.id, forKey: "lastTrack")
         loadArtwork(t)
         Task { await lyrics?.load(t); pushSurfaces(track: true) }
@@ -281,10 +284,13 @@ final class Player: ObservableObject {
         if seconds.isFinite { time = seconds }
         if let d = player.currentItem?.duration.seconds, d.isFinite, d > 0 { duration = d }
         if let end = sleepEnds, Date() >= end { fadeOutAndStop() }
-        // aktuelle Lyrics-Zeile → Dynamic Island / Sperrbildschirm
+        // aktuelle Lyrics-Zeile: in der App genau, für Sperrbildschirm/Dynamic Island 0,4 s früher
+        // (iOS zeichnet Live-Aktivitäten verzögert – so steht die Zeile da, wenn sie gesungen wird)
         if let l = lyrics, l.trackID == current?.id {
             let idx = l.index(at: time, rate: bakedRate)
-            if idx != lyricIndex { lyricIndex = idx; pushSurfaces(track: false) }
+            if idx != lyricIndex { lyricIndex = idx }
+            let early = l.index(at: time + 0.4 * ratio, rate: bakedRate)
+            if early != surfaceIndex { surfaceIndex = early; pushSurfaces(track: false) }
         }
         ticks += 1
         if ticks % 8 == 0 { checkUpgrade() }
@@ -369,7 +375,7 @@ final class Player: ObservableObject {
     private func pushSurfaces(track: Bool) {
         guard let t = current else { LiveActivityManager.shared.end(); WidgetData.writeNowPlaying(nil); return }
         let lines = (lyrics?.trackID == t.id) ? (lyrics?.lines ?? []) : []
-        let idx = lyricIndex
+        let idx = surfaceIndex ?? lyricIndex
         let cur = idx.flatMap { $0 < lines.count ? lines[$0].text : nil } ?? ""
         let nxt = idx.flatMap { $0 + 1 < lines.count ? lines[$0 + 1].text : nil } ?? (idx == nil ? (lines.first?.text ?? "") : "")
         let r = max(ratio, 0.1)

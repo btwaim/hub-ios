@@ -214,7 +214,27 @@ enum Store {
 actor CoverCache {
     static let shared = CoverCache()
     private var memory: [String: UIImage] = [:]
+    private var thumbs: [String: UIImage] = [:]
     private let dir = Store.dir("Covers")
+
+    /// verkleinerte Fassung (für Listen, Mini-Player, Hintergründe) – spart Speicher und macht Scrollen flüssig
+    func image(for string: String?, px: CGFloat) async -> UIImage? {
+        guard let string else { return nil }
+        let key = "\(string)#\(Int(px))"
+        if let t = thumbs[key] { return t }
+        guard let full = await image(for: string) else { return nil }
+        let t = await Self.downsample(full, px: px)
+        if thumbs.count > 300 { thumbs.removeAll() }
+        thumbs[key] = t
+        return t
+    }
+
+    static func downsample(_ img: UIImage, px: CGFloat) async -> UIImage {
+        let w = img.size.width * img.scale, h = img.size.height * img.scale
+        guard max(w, h) > px * 1.2 else { return img }
+        let f = px / max(w, h)
+        return await img.byPreparingThumbnail(ofSize: CGSize(width: w * f, height: h * f)) ?? img
+    }
 
     func image(for string: String?) async -> UIImage? {
         guard let string, let url = URL(string: string) else { return nil }

@@ -30,6 +30,19 @@ actor ArtStore {
         memory[id] = img
     }
 
+    private var thumbs: [String: UIImage] = [:]
+
+    /// Bestes Cover, verkleinert auf `px` Pixel (Mini-Player, Kopfzeilen, unscharfe Hintergründe)
+    func thumb(for t: Track, px: CGFloat, allowNetwork: Bool = true) async -> UIImage? {
+        let key = "\(t.id)#\(Int(px))"
+        if let c = thumbs[key] { return c }
+        guard let full = await image(for: t, allowNetwork: allowNetwork) else { return nil }
+        let small = await CoverCache.downsample(full, px: px)
+        if thumbs.count > 200 { thumbs.removeAll() }
+        thumbs[key] = small
+        return small
+    }
+
     /// Bestes verfügbares Cover. `allowNetwork` = Hub (PC) darf gefragt werden; Spotify geht auch ohne PC.
     @discardableResult
     func image(for t: Track, allowNetwork: Bool = true) async -> UIImage? {

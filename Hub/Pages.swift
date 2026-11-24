@@ -130,7 +130,7 @@ struct HomeView: View {
     private var nowPlaying: some View {
         Button { nav.showPlayer = true } label: {
             HStack(spacing: 14) {
-                HDCover(track: player.current, corner: 12).frame(width: 62, height: 62)
+                HDCover(track: player.current, corner: 12, px: 200).frame(width: 62, height: 62)
                     .shadow(color: .black.opacity(0.35), radius: 8, y: 4)
                 VStack(alignment: .leading, spacing: 2) {
                     HStack(spacing: 6) {
