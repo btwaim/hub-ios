@@ -62,14 +62,27 @@ struct AlarmView: View {
 
                 Section {
                     Toggle(isOn: $alarms.enabled) { Label("Wecker nach Stundenplan", systemImage: "alarm.fill") }
-                    Toggle(isOn: $alarms.gentle) { Label("Sanft lauter werdender Ton", systemImage: "speaker.wave.1.fill") }
+                    Toggle(isOn: $alarms.gentle) { Label("Hub-Weckton (melodisch, wird lauter)", systemImage: "music.note") }
+                    if alarms.gentle {
+                        Toggle(isOn: $alarms.lead) { Label("3 Min sanfter Vorlauf", systemImage: "chart.line.uptrend.xyaxis") }
+                    }
                     Button { Task { await alarms.testAlarm() } } label: { Label("Testwecker in 1 Minute", systemImage: "alarm.waves.left.and.right") }
                     if !alarms.status.isEmpty { Label(alarms.status, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary) }
                 } header: { Text("Wecker") } footer: {
-                    Text("Hub stellt echte iPhone-Wecker – sie klingeln auch, wenn der PC aus und die App zu ist. Der Hub-Ton fängt ganz leise an und wird in einer Minute laut. Deinen alten Health-/Uhr-Wecker am besten ausschalten, damit nichts doppelt klingelt.")
+                    Text(alarms.gentle && alarms.lead
+                         ? "Der Ton beginnt 3 Minuten vor deiner Weckzeit fast unhörbar und ist zur Weckzeit laut – so wirst du sanft aus dem Schlaf geholt. Melodie mit 105 BPM, Glocken-Klang um 1,3–2,6 kHz, in der lauten Phase kommt ein tiefer Ton um 520 Hz dazu (weckt am zuverlässigsten). Alten Health-/Uhr-Wecker ausschalten, damit nichts doppelt klingelt."
+                         : "Hub stellt echte iPhone-Wecker – sie klingeln auch, wenn der PC aus und die App zu ist. Alten Health-/Uhr-Wecker ausschalten, damit nichts doppelt klingelt.")
                 }
 
                 Section {
+                    Picker("Licht startet", selection: $alarms.lightLead) {
+                        Text("10 Min").tag(10)
+                        Text("20 Min").tag(20)
+                        Text("30 Min").tag(30)
+                    }
+                    .pickerStyle(.segmented)
+                    Text("Automationen um \(alarms.lightAutomationTimes.joined(separator: ", ")) Uhr")
+                        .font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
                     lightStatus
                     Button { guideOpen = true } label: { Label("Kurzbefehl einrichten – Schritt für Schritt", systemImage: "list.number") }
                     Button {
@@ -77,8 +90,8 @@ struct AlarmView: View {
                         checkResult = "Test an: Starte jetzt in Kurzbefehle einmal „Hub Aufstehlicht“ – das Licht sollte angehen (10 Minuten lang)."
                     } label: { Label("Licht testen", systemImage: "lightbulb.max.fill") }
                     if let c = checkResult { Text(c).font(.footnote).foregroundStyle(.secondary) }
-                } header: { Text("Aufstehlicht (WiZ) · 10 Min vorher") } footer: {
-                    Text("Ein Kurzbefehl fragt Hub kurz vor den möglichen Weckzeiten, ob gleich der Wecker klingelt – und schaltet dann dein WiZ-Aufstehlicht ein. Dabei holt Hub auch nochmal den frischen Stundenplan.")
+                } header: { Text("Aufstehlicht (WiZ)") } footer: {
+                    Text("Empfohlen: 30 Minuten – so lange dauert die künstliche Morgendämmerung in den Studien (langsam bis ca. 200–300 Lux, Start warm/rötlich und sehr dunkel). Wenn dein WiZ-Aufstehen-Modus sofort hell ist statt langsam hochzudimmen, lieber 10 Minuten nehmen. Der Kurzbefehl holt dabei auch den frischen Stundenplan.")
                 }
 
                 Section("Nächste Tage") {
@@ -294,15 +307,21 @@ struct ShortcutGuide: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.openURL) private var openURL
 
-    private let steps: [(String, String, String)] = [
+    @ObservedObject private var alarms = Alarms.shared
+
+    private var steps: [(String, String, String)] {
+        let times = alarms.lightAutomationTimes
+        let t = times.map { "**\($0)**" }
+        return [
         ("1", "Kurzbefehl anlegen", "Kurzbefehle-App öffnen → unten **Kurzbefehle** → oben **+**."),
         ("2", "Hub fragen", "In der Suche **Aufstehlicht prüfen** eintippen und die Aktion von **Hub** antippen."),
         ("3", "Wenn-Abfrage", "Suche **Wenn** → antippen. Bedingung: **Aufstehlicht** · **ist** · **wahr** (bzw. „Ja“)."),
         ("4", "WiZ einschalten", "In die **Wenn**-Klammer deine WiZ-Aktion für den **Aufstehen-Modus** ziehen – dieselbe wie in deinem bisherigen Kurzbefehl (oder **Kurzbefehl ausführen** → deinen WiZ-Kurzbefehl)."),
         ("5", "Namen geben", "Oben auf den Namen tippen → **Hub Aufstehlicht** → Fertig."),
-        ("6", "Drei Automationen", "Unten **Automation** → **+** → **Tageszeit** → **06:15**, **Täglich** → **Sofort ausführen** → **Hub Aufstehlicht**. Das Gleiche nochmal für **07:15** und **08:20** (10 Minuten vor 06:25, 07:25 und 08:30)."),
+        ("6", "Drei Automationen", "Unten **Automation** → **+** → **Tageszeit** → \(t.first ?? ""), **Täglich** → **Sofort ausführen** → **Hub Aufstehlicht**. Das Gleiche nochmal für \(t.dropFirst().joined(separator: " und ")) (je \(alarms.lightLead) Minuten vor 06:25, 07:25 und 08:30)."),
         ("7", "Alte Automation aus", "Deine alte Automation „Wenn Wecker klingelt → WiZ“ ausschalten, und den alten Health-/Uhr-Wecker auch – jetzt weckt Hub."),
-    ]
+        ]
+    }
 
     var body: some View {
         NavigationStack {

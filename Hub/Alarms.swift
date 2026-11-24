@@ -12,8 +12,32 @@ struct HubAlarmData: AlarmMetadata {}
 @MainActor
 final class Alarms: ObservableObject {
     static let shared = Alarms()
-    /// eigener Weckton (Resources/hub-wake.caf, mit Endung angeben – sonst spielt iOS den Standardton)
-    static let soundFile = "hub-wake.caf"
+    /// eigene Wecktöne (mit Endung angeben – sonst spielt iOS den Standardton)
+    static let soundLead = "hub-wake.caf"        // startet 3 Min vor der Weckzeit fast unhörbar, zur Weckzeit laut
+    static let soundShort = "hub-wake-kurz.caf"  // 45 s von leise auf laut
+    static let leadSeconds: Double = 180
+    /// mögliche Weckzeiten (Hub-Regeln) – für die Zeiten der Licht-Automationen
+    static let ruleTimes = ["06:25", "07:25", "08:30"]
+
+    /// 3 Minuten sanfter Vorlauf (Studien: langsamer Anstieg → bessere Laune, nicht später wach)
+    @Published var lead: Bool = UserDefaults.standard.object(forKey: "alarmLead") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(lead, forKey: "alarmLead")
+            Task { await reschedule() }
+        }
+    }
+    /// Wie viele Minuten vor dem Wecker das Aufstehlicht startet (Studien zur Morgendämmerung: meist 30 Min)
+    @Published var lightLead: Int = UserDefaults.standard.object(forKey: "lightLead") as? Int ?? 30 {
+        didSet { UserDefaults.standard.set(lightLead, forKey: "lightLead") }
+    }
+
+    /// Uhrzeiten für die Licht-Automationen (Weckzeit − Licht-Vorlauf)
+    var lightAutomationTimes: [String] {
+        let f = DateFormatter()
+        f.locale = Locale(identifier: "en_US_POSIX")
+        f.dateFormat = "HH:mm"
+        return Alarms.ruleTimes.compactMap { f.date(from: $0).map { f.string(from: $0.addingTimeInterval(Double(-lightLead) * 60)) } }
+    }
 
     @Published private(set) var days: [WakeDay] = Store.load([WakeDay].self, "wake.json") ?? []
     @Published var enabled: Bool = UserDefaults.standard.object(forKey: "alarmsOn") as? Bool ?? true {
@@ -78,12 +102,15 @@ final class Alarms: ObservableObject {
         days.compactMap { d in d.wakeDate.map { (at: $0, day: d) } }.filter { $0.at > Date() }.min { $0.at < $1.at }
     }
 
-    private func config(_ when: Date, title: String) -> AlarmManager.AlarmConfiguration<HubAlarmData> {
+    private func config(_ when: Date, title: String, short: Bool = false) -> AlarmManager.AlarmConfiguration<HubAlarmData> {
         let stop = AlarmButton(text: "Aus", textColor: .white, systemImageName: "sun.max.fill")
         let alert = AlarmPresentation.Alert(title: LocalizedStringResource(stringLiteral: title), stopButton: stop)
         let attributes = AlarmAttributes<HubAlarmData>(presentation: AlarmPresentation(alert: alert), tintColor: Color.orange)
-        let sound: AlertConfiguration.AlertSound = gentle ? .named(Alarms.soundFile) : .default
-        return AlarmManager.AlarmConfiguration<HubAlarmData>(schedule: .fixed(when), attributes: attributes, sound: sound)
+        let useLead = gentle && lead && !short
+        let sound: AlertConfiguration.AlertSound = gentle ? .named(useLead ? Alarms.soundLead : Alarms.soundShort) : .default
+        // mit Vorlauf klingelt es 3 Minuten früher ganz leise – zur eigentlichen Weckzeit ist der Ton laut
+        let start = useLead ? when.addingTimeInterval(-Alarms.leadSeconds) : when
+        return AlarmManager.AlarmConfiguration<HubAlarmData>(schedule: .fixed(start), attributes: attributes, sound: sound)
     }
 
     private func authorized() async -> Bool {
@@ -97,8 +124,8 @@ final class Alarms: ObservableObject {
     func testAlarm() async {
         guard await authorized() else { return }
         do {
-            _ = try await AlarmManager.shared.schedule(id: UUID(), configuration: config(Date().addingTimeInterval(60), title: "Hub-Testwecker"))
-            status = "Testwecker klingelt in einer Minute"
+            _ = try await AlarmManager.shared.schedule(id: UUID(), configuration: config(Date().addingTimeInterval(60), title: "Hub-Testwecker", short: true))
+            status = "Testwecker klingelt in einer Minute (kurze Fassung: 45 s von leise auf laut)"
         } catch {
             status = "Testwecker ging nicht: \(error.localizedDescription)"
         }
@@ -114,7 +141,7 @@ final class Alarms: ObservableObject {
 
         var ids: [String] = []
         for day in days {
-            guard let when = day.wakeDate, when > Date() else { continue }
+            guard let when = day.wakeDate, when.addingTimeInterval(gentle && lead ? -Alarms.leadSeconds : 0) > Date() else { continue }
             let id = UUID()
             let title = day.period.map { "Guten Morgen · \($0). Stunde\(day.subject.map { " \($0)" } ?? "")" } ?? "Guten Morgen"
             do {
@@ -146,7 +173,8 @@ final class Alarms: ObservableObject {
             note = "Test: Licht an"
         } else if let n = next {
             let mins = n.at.timeIntervalSinceNow / 60
-            on = enabled && mins >= 2 && mins <= 22
+            // Automation läuft „Licht-Vorlauf“ Minuten vor der Weckzeit; etwas Spielraum, falls iOS sie später startet
+            on = enabled && mins >= Double(lightLead) - 8 && mins <= Double(lightLead) + 8
             let time = n.at.formatted(date: .omitted, time: .shortened)
             note = on ? "Wecker \(time) → Aufstehlicht an" : "Wecker erst \(time) – noch kein Licht"
         } else {
