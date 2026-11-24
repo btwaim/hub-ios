@@ -10,6 +10,8 @@ struct HomeView: View {
     @EnvironmentObject var nav: Nav
     @State private var showAlarms = false
     @State private var showSettings = false
+    @State private var showMap = false
+    @State private var showDL = false
 
     private var state: HubState? { library.hub }
 
@@ -19,6 +21,7 @@ struct HomeView: View {
                 VStack(alignment: .leading, spacing: 14) {
                     header
                     if player.current != nil { nowPlaying }
+                    quick
                     if let s = state?.school, let lessons = s.lessons, !lessons.isEmpty { school(s.label ?? "Schule", lessons) }
                     wake
                     if let ex = state?.nextExam { exam(ex) }
@@ -46,7 +49,33 @@ struct HomeView: View {
             }
             .sheet(isPresented: $showAlarms) { AlarmView() }
             .sheet(isPresented: $showSettings) { SettingsView() }
+            .sheet(isPresented: $showDL) { DownloaderView() }
+            .fullScreenCover(isPresented: $showMap) { GTAMapScreen() }
         }
+    }
+
+    /// Schnellzugriff: GTA-Karte, Downloader, Wecker
+    private var quick: some View {
+        HStack(spacing: 10) {
+            quickButton("GTA-Karte", "map.fill", [.pink, .orange]) { showMap = true }
+            quickButton("Downloader", "arrow.down.circle.fill", [.purple, .blue]) { showDL = true }
+            quickButton("Wecker", "alarm.fill", [.orange, .yellow]) { showAlarms = true }
+        }
+    }
+
+    private func quickButton(_ title: String, _ icon: String, _ colors: [Color], action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            VStack(spacing: 8) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .foregroundStyle(LinearGradient(colors: colors, startPoint: .topLeading, endPoint: .bottomTrailing))
+                Text(title).font(.caption.weight(.semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 14)
+            .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 20))
+        }
+        .buttonStyle(.plain)
     }
 
     private var header: some View {
@@ -193,6 +222,10 @@ struct HomeView: View {
     }
 
     private func gta(_ g: String) -> some View {
+        Button { showMap = true } label: { gtaCard(g) }.buttonStyle(.plain)
+    }
+
+    private func gtaCard(_ g: String) -> some View {
         Card {
             HStack {
                 VStack(alignment: .leading, spacing: 4) {

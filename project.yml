@@ -37,6 +37,9 @@ targets:
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSAlarmKitUsageDescription: "Hub stellt deine Wecker passend zum Stundenplan."
         NSSupportsLiveActivities: true
+        NSPhotoLibraryAddUsageDescription: "Hub sichert heruntergeladene Videos und Bilder in deiner Fotos-App."
+        UIFileSharingEnabled: true
+        LSSupportsOpeningDocumentsInPlace: true
         ITSAppUsesNonExemptEncryption: false
         CFBundleURLTypes:
           - CFBundleURLName: app.hubmusic.hub
