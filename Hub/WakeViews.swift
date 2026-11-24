@@ -61,32 +61,24 @@ struct AlarmView: View {
                 }
 
                 Section {
-                    Picker("Wecker", selection: $alarms.mode) {
-                        Text("Health-Wecker").tag(Alarms.Mode.health)
-                        Text("Hub-Wecker").tag(Alarms.Mode.hub)
-                    }
-                    .pickerStyle(.segmented)
-                    if alarms.mode == .health {
-                        shortcutStatus
-                        Button { guideOpen = true } label: { Label("Kurzbefehl einrichten – Schritt für Schritt", systemImage: "list.number") }
-                        Button {
-                            Task {
-                                checking = true
-                                let r = await school.shortcutWake(record: false)
-                                checkResult = r.value.isEmpty ? r.note : "Der Kurzbefehl würde den Wecker auf \(r.value) stellen. \(r.note)"
-                                checking = false
-                            }
-                        } label: { HStack { Label("Prüfen, was der Kurzbefehl stellen würde", systemImage: "checklist"); if checking { Spacer(); ProgressView() } } }
-                        if let c = checkResult { Text(c).font(.footnote).foregroundStyle(.secondary) }
-                    } else {
-                        Toggle("Hub-Wecker stellen", isOn: $alarms.enabled)
-                        Button { Task { await alarms.testAlarm() } } label: { Label("Testwecker in 1 Minute", systemImage: "alarm.waves.left.and.right") }
-                    }
-                    if !alarms.status.isEmpty { Text(alarms.status).font(.footnote).foregroundStyle(.secondary) }
-                } header: { Text("Wecker-Art") } footer: {
-                    Text(alarms.mode == .health
-                         ? "Dein normaler Wecker aus Health/Uhr wird umgestellt – per Kurzbefehl-Automation, weil Apple Apps das nicht direkt erlaubt."
-                         : "Hub stellt eigene Wecker (klingeln wie normale iPhone-Wecker, auch ohne PC).")
+                    Toggle(isOn: $alarms.enabled) { Label("Wecker nach Stundenplan", systemImage: "alarm.fill") }
+                    Toggle(isOn: $alarms.gentle) { Label("Sanft lauter werdender Ton", systemImage: "speaker.wave.1.fill") }
+                    Button { Task { await alarms.testAlarm() } } label: { Label("Testwecker in 1 Minute", systemImage: "alarm.waves.left.and.right") }
+                    if !alarms.status.isEmpty { Label(alarms.status, systemImage: "info.circle").font(.footnote).foregroundStyle(.secondary) }
+                } header: { Text("Wecker") } footer: {
+                    Text("Hub stellt echte iPhone-Wecker – sie klingeln auch, wenn der PC aus und die App zu ist. Der Hub-Ton fängt ganz leise an und wird in einer Minute laut. Deinen alten Health-/Uhr-Wecker am besten ausschalten, damit nichts doppelt klingelt.")
+                }
+
+                Section {
+                    lightStatus
+                    Button { guideOpen = true } label: { Label("Kurzbefehl einrichten – Schritt für Schritt", systemImage: "list.number") }
+                    Button {
+                        alarms.startLightTest()
+                        checkResult = "Test an: Starte jetzt in Kurzbefehle einmal „Hub Aufstehlicht“ – das Licht sollte angehen (10 Minuten lang)."
+                    } label: { Label("Licht testen", systemImage: "lightbulb.max.fill") }
+                    if let c = checkResult { Text(c).font(.footnote).foregroundStyle(.secondary) }
+                } header: { Text("Aufstehlicht (WiZ) · 10 Min vorher") } footer: {
+                    Text("Ein Kurzbefehl fragt Hub kurz vor den möglichen Weckzeiten, ob gleich der Wecker klingelt – und schaltet dann dein WiZ-Aufstehlicht ein. Dabei holt Hub auch nochmal den frischen Stundenplan.")
                 }
 
                 Section("Nächste Tage") {
@@ -115,7 +107,7 @@ struct AlarmView: View {
                 Image(systemName: "alarm.fill")
                 Text(n.map { dayTitle($0.plan.date) } ?? "Nächster Wecker").textCase(.uppercase)
                 Spacer()
-                Text(alarms.mode == .health ? "Health" : "Hub").font(.caption2.weight(.heavy))
+                Text(alarms.enabled ? "AN" : "AUS").font(.caption2.weight(.heavy))
                     .padding(.horizontal, 8).padding(.vertical, 3).background(.white.opacity(0.2), in: Capsule())
             }
             .font(.caption.weight(.bold))
@@ -145,18 +137,18 @@ struct AlarmView: View {
         .padding(.vertical, 4)
     }
 
-    @ViewBuilder private var shortcutStatus: some View {
-        if let s = school.lastShortcut {
+    @ViewBuilder private var lightStatus: some View {
+        if let s = alarms.lastLight {
             HStack(alignment: .top, spacing: 10) {
-                Image(systemName: s.fresh ? "checkmark.circle.fill" : "exclamationmark.circle.fill")
-                    .foregroundStyle(s.fresh ? .green : .orange)
+                Image(systemName: s.on ? "lightbulb.max.fill" : "lightbulb")
+                    .foregroundStyle(s.on ? Color.yellow : Color.secondary)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("Kurzbefehl zuletzt: \(s.at.formatted(date: .abbreviated, time: .shortened))").font(.subheadline.weight(.semibold))
+                    Text("Zuletzt geprüft: \(s.at.formatted(date: .abbreviated, time: .shortened))").font(.subheadline.weight(.semibold))
                     Text(s.note).font(.caption).foregroundStyle(.secondary)
                 }
             }
         } else {
-            Label("Der Kurzbefehl ist noch nie gelaufen", systemImage: "clock.badge.questionmark").font(.subheadline).foregroundStyle(.secondary)
+            Label("Der Kurzbefehl hat noch nie nachgefragt", systemImage: "clock.badge.questionmark").font(.subheadline).foregroundStyle(.secondary)
         }
     }
 
@@ -304,12 +296,12 @@ struct ShortcutGuide: View {
 
     private let steps: [(String, String, String)] = [
         ("1", "Kurzbefehl anlegen", "Kurzbefehle-App öffnen → unten **Kurzbefehle** → oben **+**."),
-        ("2", "Weckzeit holen", "Unten in der Suche **Weckzeit holen** eintippen und die Aktion von **Hub** antippen."),
-        ("3", "Wenn-Abfrage", "Suche **Wenn** → antippen. Bedingung: **Weckzeit** · **hat einen beliebigen Wert**. (Ohne Schule bleibt der Wecker so, wie er ist.)"),
-        ("4", "Schlaf-Wecker ändern", "Suche **Schlaf** oder **Wecker** → die Aktion der **Uhr**-App, die den Schlaf-/Weck-Wecker ändert (je nach iOS z. B. „Schlafwecker ändern“). In die **Wenn**-Klammer ziehen, als Uhrzeit die blaue Variable **Weckzeit** wählen, Wecker auf **Ein**."),
-        ("5", "Namen geben", "Oben auf den Namen tippen → **Hub Wecker** → Fertig."),
-        ("6", "Automation morgens", "Unten **Automation** → **+** → **Tageszeit** → **05:30**, **Täglich** → **Sofort ausführen** → Kurzbefehl **Hub Wecker**."),
-        ("7", "Automation abends", "Noch einmal **+** → **Tageszeit** → **20:00** → **Sofort ausführen** → **Hub Wecker**. So stimmt der Wecker schon abends und wird morgens nochmal geprüft."),
+        ("2", "Hub fragen", "In der Suche **Aufstehlicht prüfen** eintippen und die Aktion von **Hub** antippen."),
+        ("3", "Wenn-Abfrage", "Suche **Wenn** → antippen. Bedingung: **Aufstehlicht** · **ist** · **wahr** (bzw. „Ja“)."),
+        ("4", "WiZ einschalten", "In die **Wenn**-Klammer deine WiZ-Aktion für den **Aufstehen-Modus** ziehen – dieselbe wie in deinem bisherigen Kurzbefehl (oder **Kurzbefehl ausführen** → deinen WiZ-Kurzbefehl)."),
+        ("5", "Namen geben", "Oben auf den Namen tippen → **Hub Aufstehlicht** → Fertig."),
+        ("6", "Drei Automationen", "Unten **Automation** → **+** → **Tageszeit** → **06:15**, **Täglich** → **Sofort ausführen** → **Hub Aufstehlicht**. Das Gleiche nochmal für **07:15** und **08:20** (10 Minuten vor 06:25, 07:25 und 08:30)."),
+        ("7", "Alte Automation aus", "Deine alte Automation „Wenn Wecker klingelt → WiZ“ ausschalten, und den alten Health-/Uhr-Wecker auch – jetzt weckt Hub."),
     ]
 
     var body: some View {
@@ -331,9 +323,9 @@ struct ShortcutGuide: View {
                     }
                     VStack(alignment: .leading, spacing: 8) {
                         Label("So prüfst du, ob es klappt", systemImage: "checkmark.seal.fill").font(.headline).foregroundStyle(.green)
-                        Text(.init("• In Kurzbefehle einmal auf **Hub Wecker** tippen.\n• **Uhr**-App → **Wecker** → ganz oben bei **Schlafen | Wecken** steht jetzt die neue Zeit.\n• Hier in Hub → **Wecker** steht unter „Kurzbefehl zuletzt“, wann er lief und was er gestellt hat.\n• Mit „Prüfen, was der Kurzbefehl stellen würde“ siehst du die Zeit vorab."))
+                        Text(.init("• In Hub → **Wecker** auf **Licht testen** tippen.\n• Dann in Kurzbefehle einmal auf **Hub Aufstehlicht** tippen → das WiZ-Licht geht an.\n• Hier unter „Zuletzt geprüft“ siehst du jeden Morgen, wann der Kurzbefehl gefragt hat und ob das Licht anging.\n• **Testwecker in 1 Minute** spielt den sanft lauter werdenden Ton."))
                             .font(.subheadline)
-                        Text("Wichtig: In Health → Schlaf muss ein Schlafplan mit Wecker eingerichtet sein. Gibt es die Uhr-Aktion auf deinem iPhone nicht, stell oben auf „Hub-Wecker“ um.")
+                        Text("Die Prüfung sagt nur „an“, wenn der Hub-Wecker in den nächsten 2–22 Minuten klingelt. An freien Tagen bleibt das Licht aus.")
                             .font(.footnote).foregroundStyle(.secondary)
                     }
                     .padding(16)
@@ -347,7 +339,7 @@ struct ShortcutGuide: View {
                 }
                 .padding(20)
             }
-            .navigationTitle("Health-Wecker per Kurzbefehl")
+            .navigationTitle("Aufstehlicht per Kurzbefehl")
             .navigationBarTitleDisplayMode(.inline)
             .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Fertig") { dismiss() } } }
         }

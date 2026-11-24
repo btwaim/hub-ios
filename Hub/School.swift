@@ -389,7 +389,12 @@ struct WakeTimeIntent: AppIntent {
 }
 
 struct HubShortcuts: AppShortcutsProvider {
+    @AppShortcutsBuilder
     static var appShortcuts: [AppShortcut] {
+        AppShortcut(intent: WakeLightIntent(),
+                    phrases: ["Aufstehlicht von \(.applicationName)", "\(.applicationName) Aufstehlicht prüfen"],
+                    shortTitle: "Aufstehlicht prüfen",
+                    systemImageName: "sun.horizon.fill")
         AppShortcut(intent: WakeTimeIntent(),
                     phrases: ["Weckzeit von \(.applicationName)", "\(.applicationName) Weckzeit holen"],
                     shortTitle: "Weckzeit holen",

@@ -254,7 +254,7 @@ struct HomeView: View {
                 }
                 Spacer()
                 VStack(alignment: .trailing, spacing: 4) {
-                    Text(alarms.mode == .health ? "Health" : "Hub").font(.caption2.weight(.heavy))
+                    Text(alarms.enabled ? "AN" : "AUS").font(.caption2.weight(.heavy))
                         .padding(.horizontal, 7).padding(.vertical, 3).background(Color.orange.opacity(0.2), in: Capsule()).foregroundStyle(.orange)
                     Image(systemName: "chevron.right").foregroundStyle(.tertiary)
                 }
