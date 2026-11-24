@@ -344,9 +344,10 @@ struct WakeWidgetView: View {
                 small(next)
             }
         }
+        .widgetURL(URL(string: "hubapp://wake"))
         .containerBackground(for: .widget) {
             if family == .systemSmall {
-                LinearGradient(colors: [Color(red: 0.2, green: 0.08, blue: 0.4), Color(red: 0.05, green: 0.03, blue: 0.12)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                LinearGradient(colors: [Color(red: 0.95, green: 0.45, blue: 0.2), Color(red: 0.45, green: 0.18, blue: 0.75)], startPoint: .topLeading, endPoint: .bottomTrailing)
             } else if family == .accessoryCircular { AccessoryWidgetBackground() }
             else { Color.clear }
         }
@@ -355,13 +356,13 @@ struct WakeWidgetView: View {
     private func small(_ next: NextWake?) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
-                Image(systemName: "alarm.fill").foregroundStyle(hubPurple)
+                Image(systemName: "alarm.fill").foregroundStyle(.white)
                 Text(next?.dayName ?? "Wecker").font(.caption.weight(.bold)).foregroundStyle(.white.opacity(0.7))
             }
             Spacer(minLength: 0)
             Text(next?.day.wake ?? "–")
                 .font(.system(size: 44, weight: .heavy, design: .rounded))
-                .shadow(color: hubPurple.opacity(0.6), radius: 12)
+                .shadow(color: .black.opacity(0.25), radius: 8)
                 .minimumScaleFactor(0.6)
             if let n = next {
                 Text(n.detail.isEmpty ? "Schule" : n.detail).font(.caption).foregroundStyle(.white.opacity(0.7)).lineLimit(2)

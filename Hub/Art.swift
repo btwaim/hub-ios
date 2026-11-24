@@ -1,52 +1,82 @@
 import Foundation
 import UIKit
 
-/// Cover in hoher Auflösung (bis 2048 px, über den Hub aus Apples Musikkatalog; sonst Spotify 640 px).
-/// Einmal geladen → offline auf dem iPhone.
+/// Cover in hoher Auflösung. Reihenfolge: gespeichertes HD-Cover → HD vom Hub (2048 px, nur bei sicherem Treffer)
+/// → Spotify-Cover (640 px, braucht nur Internet) → kleines Cover. Einmal geladen → offline auf dem iPhone.
 actor ArtStore {
     static let shared = ArtStore()
     private var memory: [String: UIImage] = [:]
-    private let dir = Store.dir("CoversHD")
+    private var loading: [String: Task<UIImage?, Never>] = [:]
+    /// neuer Ordner: alte, teils falsche Treffer werden nicht mehr benutzt
+    private let dir = Store.dir("CoversHD2")
 
     private struct ArtResponse: Decodable { let url: String? }
+
+    init() {
+        // alten Ordner mit teils falschen Covern aufräumen
+        try? FileManager.default.removeItem(at: Store.support.appendingPathComponent("CoversHD"))
+    }
 
     func file(for t: Track) -> URL { dir.appendingPathComponent("\(t.id).jpg") }
 
     func cached(_ t: Track) -> UIImage? {
         if let m = memory[t.id] { return m }
-        if let img = UIImage(contentsOfFile: file(for: t).path) { memory[t.id] = img; return img }
+        if let img = UIImage(contentsOfFile: file(for: t).path) { remember(t.id, img); return img }
         return nil
     }
 
-    /// HD-Cover holen (falls nicht schon da). `allowNetwork` = PC/Internet darf benutzt werden.
+    private func remember(_ id: String, _ img: UIImage) {
+        if memory.count > 60 { memory.removeAll() }
+        memory[id] = img
+    }
+
+    /// Bestes verfügbares Cover. `allowNetwork` = Hub (PC) darf gefragt werden; Spotify geht auch ohne PC.
     @discardableResult
     func image(for t: Track, allowNetwork: Bool = true) async -> UIImage? {
         if let c = cached(t) { return c }
-        guard allowNetwork else { return nil }
-        var url: URL?
-        if let r = try? await API.get("/api/art/\(t.id)", ["a": t.artist, "n": t.title], timeout: 8, as: ArtResponse.self), let s = r.url {
-            url = URL(string: s)
-        }
-        if url == nil, let s = t.big ?? t.cover { url = URL(string: s) }
-        guard let url, let (data, _) = try? await URLSession.shared.data(from: url), let img = UIImage(data: data) else { return nil }
-        try? data.write(to: file(for: t))
-        memory[t.id] = img
-        if memory.count > 40 { memory.removeAll() }
+        if let running = loading[t.id] { return await running.value }
+        let job = Task<UIImage?, Never> { await self.fetch(t, askHub: allowNetwork) }
+        loading[t.id] = job
+        let img = await job.value
+        loading[t.id] = nil
         return img
+    }
+
+    private func fetch(_ t: Track, askHub: Bool) async -> UIImage? {
+        var hubAnswered = false
+        var url: URL?
+        if askHub, let r = try? await API.get("/api/art/\(t.id)", ["a": t.artist, "n": t.title, "b": t.album ?? ""], timeout: 8, as: ArtResponse.self) {
+            hubAnswered = true
+            url = r.url.flatMap(URL.init(string:))
+        }
+        if let url, let (data, _) = try? await URLSession.shared.data(from: url), let img = UIImage(data: data) {
+            try? data.write(to: file(for: t))
+            remember(t.id, img)
+            return img
+        }
+        // Spotify-Cover: endgültig speichern, wenn der Hub gesagt hat „kein besseres“, sonst nur zwischendurch zeigen
+        if let s = t.big ?? t.cover, let u = URL(string: s), let (data, _) = try? await URLSession.shared.data(from: u), let img = UIImage(data: data) {
+            if hubAnswered { try? data.write(to: file(for: t)) }
+            remember(t.id, img)
+            return img
+        }
+        return await CoverCache.shared.image(for: t.cover)
     }
 
     /// Kleine Fassung fürs Widget / die Dynamic Island in den App-Group-Ordner legen
     func exportThumb(_ t: Track) async -> String? {
         guard let img = await image(for: t), let dir = AppGroup.container else { return nil }
-        let name = "cover-\(t.id).jpg"
+        let name = "art-\(t.id).jpg"
         let target = dir.appendingPathComponent(name)
         if !FileManager.default.fileExists(atPath: target.path) {
-            let size = CGSize(width: 360, height: 360)
+            let size = CGSize(width: 300, height: 300)
             let thumb = UIGraphicsImageRenderer(size: size).image { _ in img.draw(in: CGRect(origin: .zero, size: size)) }
             try? thumb.jpegData(compressionQuality: 0.85)?.write(to: target)
-            // alte Cover-Dateien aufräumen
+            // alte Cover-Dateien aufräumen (auch die alten „cover-“-Dateien mit teils falschen Bildern)
             if let files = try? FileManager.default.contentsOfDirectory(atPath: dir.path) {
-                for f in files where f.hasPrefix("cover-") && f != name { try? FileManager.default.removeItem(at: dir.appendingPathComponent(f)) }
+                for f in files where (f.hasPrefix("cover-") || f.hasPrefix("art-")) && f != name {
+                    try? FileManager.default.removeItem(at: dir.appendingPathComponent(f))
+                }
             }
         }
         return name

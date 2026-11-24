@@ -5,6 +5,7 @@ import SwiftUI
 final class Nav: ObservableObject {
     static let shared = Nav()
     @Published var showPlayer = false
+    @Published var showAlarms = false
     @Published var tab = 0
 }
 
@@ -45,13 +46,27 @@ struct HubApp: App {
             .onOpenURL { url in
                 if url.scheme == "hubapp", url.host == "player" { nav.showPlayer = true; return }
                 if url.scheme == "hubapp", url.host == "watch" { nav.tab = 3; return }
+                if url.scheme == "hubapp", url.host == "wake" { nav.tab = 0; nav.showAlarms = true; return }
                 if Config.apply(link: url) { setUp = true; Task { await start() } }
             }
             .task { if setUp { await start() } }
             .onChange(of: phase) { _, p in
                 if p == .active && setUp { Task { await start() } }
+                if p == .background { School.scheduleBackground() }
             }
         }
+        // ab und zu im Hintergrund: Stundenplan direkt von WebUntis → Weckzeiten + Widget aktuell (auch ohne PC)
+        .backgroundTask(.appRefresh(School.refreshTask)) {
+            await Self.backgroundRefresh()
+        }
+    }
+
+    @MainActor
+    private static func backgroundRefresh() async {
+        School.scheduleBackground()
+        guard School.shared.connected else { return }
+        await School.shared.refresh()
+        await Alarms.shared.refreshFromSchool()
     }
 
     /// Beim Öffnen: Playlist + fehlende Songs vom PC, Weckzeiten, Lyrics vorab (alles nur, wenn der PC erreichbar ist)

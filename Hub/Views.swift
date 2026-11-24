@@ -37,6 +37,7 @@ struct CoverImage: View {
     var size: CGFloat?
     var corner: CGFloat = 8
     @State private var image: UIImage?
+    @State private var shownURL: String?
 
     var body: some View {
         let shape = RoundedRectangle(cornerRadius: corner, style: .continuous)
@@ -47,18 +48,41 @@ struct CoverImage: View {
                 Color.clear.aspectRatio(1, contentMode: .fit).overlay(content).clipShape(shape)
             }
         }
-        .task(id: url) { image = await CoverCache.shared.image(for: url) }
+        .task(id: url) {
+            let u = url
+            let img = await CoverCache.shared.image(for: u)
+            guard !Task.isCancelled, u == url else { return }
+            image = img
+            shownURL = u
+        }
     }
 
     @ViewBuilder private var content: some View {
-        if let image {
+        if let image, shownURL == url {
             Image(uiImage: image).resizable().scaledToFill()
         } else {
             ZStack {
-                Rectangle().fill(Color.white.opacity(0.08))
-                Image(systemName: "music.note").foregroundStyle(.secondary)
+                LinearGradient(colors: [Color.white.opacity(0.1), Color.white.opacity(0.04)], startPoint: .topLeading, endPoint: .bottomTrailing)
+                Image(systemName: "music.note").foregroundStyle(.white.opacity(0.3))
             }
         }
+    }
+}
+
+/// kleine animierte Balken („läuft gerade“)
+struct PlayingBars: View {
+    let playing: Bool
+    @State private var phase = false
+    var body: some View {
+        HStack(alignment: .bottom, spacing: 2) {
+            ForEach(0..<3, id: \.self) { i in
+                Capsule().fill(Color.purple)
+                    .frame(width: 3, height: playing ? (phase ? [12, 6, 10][i] : [5, 12, 7][i]) : 4)
+            }
+        }
+        .frame(width: 15, height: 12, alignment: .bottom)
+        .animation(playing ? .easeInOut(duration: 0.45).repeatForever(autoreverses: true) : .default, value: phase)
+        .onAppear { phase.toggle() }
     }
 }
 
@@ -76,24 +100,27 @@ struct MusicView: View {
     var body: some View {
         NavigationStack {
             List {
-                Section { SyncStatus() }
-                Section {
-                    ForEach(filtered) { t in
-                        Button { player.play(t) } label: { TrackRow(track: t) }
-                            .buttonStyle(.plain)
-                    }
+                if query.isEmpty {
+                    header
+                        .listRowInsets(EdgeInsets())
+                        .listRowBackground(Color.clear)
+                        .listRowSeparator(.hidden)
                 }
+                ForEach(filtered) { t in
+                    Button { player.play(t) } label: { TrackRow(track: t) }
+                        .buttonStyle(.plain)
+                        .listRowInsets(EdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16))
+                        .listRowBackground(Color.clear)
+                }
+            }
+            .listStyle(.plain)
+            .scrollContentBackground(.hidden)
+            .background(alignment: .top) {
+                LinearGradient(colors: [Color.purple.opacity(0.3), .clear], startPoint: .top, endPoint: .bottom).frame(height: 420).ignoresSafeArea()
             }
             .navigationTitle("Musik")
             .searchable(text: $query, prompt: "Song oder Künstler")
             .refreshable { await library.refresh() }
-            .toolbar {
-                ToolbarItem(placement: .topBarTrailing) {
-                    Button { player.shuffle.toggle() } label: {
-                        Image(systemName: "shuffle").foregroundStyle(player.shuffle ? Color.purple : Color.secondary)
-                    }
-                }
-            }
             .overlay {
                 if library.tracks.isEmpty {
                     ContentUnavailableView("Noch keine Songs", systemImage: "music.note.list", description: Text("Öffne die App einmal, während der PC an ist – dann lädt sie deine Playlist."))
@@ -101,26 +128,66 @@ struct MusicView: View {
             }
         }
     }
+
+    private var header: some View {
+        VStack(spacing: 14) {
+            HStack(spacing: 14) {
+                // Mosaik aus den ersten vier Covern
+                let firsts = Array(library.tracks.prefix(4))
+                LazyVGrid(columns: [GridItem(.fixed(52), spacing: 2), GridItem(.fixed(52), spacing: 2)], spacing: 2) {
+                    ForEach(firsts) { t in CoverImage(url: t.cover, size: 52, corner: 0) }
+                }
+                .frame(width: 106, height: 106)
+                .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+                .shadow(color: .black.opacity(0.35), radius: 12, y: 6)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Hub-Playlist").font(.title3.bold())
+                    Text("\(library.tracks.count) Songs · im Hub-Sound").font(.subheadline).foregroundStyle(.secondary)
+                    SyncStatus()
+                }
+                Spacer(minLength: 0)
+            }
+            HStack(spacing: 12) {
+                Button {
+                    player.shuffle = false
+                    if let f = library.tracks.first(where: { library.isOffline($0) }) ?? library.tracks.first { player.play(f) }
+                } label: {
+                    Label("Abspielen", systemImage: "play.fill").font(.headline).frame(maxWidth: .infinity).frame(height: 48)
+                }
+                .glassEffect(.regular.tint(.purple.opacity(0.55)).interactive(), in: .rect(cornerRadius: 16))
+                Button {
+                    player.shuffle = true
+                    let pool = library.tracks.filter { library.isOffline($0) }
+                    if let f = (pool.isEmpty ? library.tracks : pool).randomElement() { player.play(f) }
+                } label: {
+                    Label("Zufall", systemImage: "shuffle").font(.headline).frame(maxWidth: .infinity).frame(height: 48)
+                }
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(16)
+    }
 }
 
 struct SyncStatus: View {
     @EnvironmentObject var library: Library
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Circle().fill(library.pcOnline ? Color.green : Color.gray).frame(width: 8, height: 8)
+        VStack(alignment: .leading, spacing: 5) {
+            HStack(spacing: 6) {
+                Circle().fill(library.pcOnline ? Color.green : Color.gray).frame(width: 7, height: 7)
                 if let p = library.progress {
-                    Text("Speichere offline \(p.done)/\(p.total) · \(p.title)").lineLimit(1)
+                    Text("Lädt \(p.done)/\(p.total)").lineLimit(1)
                 } else {
-                    Text("\(library.pcOnline ? "PC verbunden" : "Ohne PC") · \(library.offlineCount)/\(library.tracks.count) offline")
+                    Text("\(library.offlineCount)/\(library.tracks.count) offline")
                 }
             }
             if let p = library.progress {
-                ProgressView(value: Double(p.done), total: Double(max(p.total, 1))).tint(.purple)
+                ProgressView(value: Double(p.done), total: Double(max(p.total, 1))).tint(.purple).frame(maxWidth: 160)
             }
         }
-        .font(.footnote)
+        .font(.caption)
         .foregroundStyle(.secondary)
     }
 }
@@ -131,22 +198,34 @@ struct TrackRow: View {
     @EnvironmentObject var player: Player
 
     var body: some View {
+        let current = player.current?.id == track.id
         HStack(spacing: 12) {
-            CoverImage(url: track.cover, size: 46, corner: 8)
-            VStack(alignment: .leading, spacing: 2) {
+            CoverImage(url: track.cover, size: 50, corner: 9)
+                .overlay {
+                    if current {
+                        RoundedRectangle(cornerRadius: 9, style: .continuous).fill(.black.opacity(0.45))
+                        PlayingBars(playing: player.isPlaying)
+                    }
+                }
+            VStack(alignment: .leading, spacing: 3) {
                 Text(track.title).font(.body.weight(.semibold)).lineLimit(1)
-                    .foregroundStyle(player.current?.id == track.id ? Color.purple : Color.primary)
-                Text(track.artist).font(.subheadline).foregroundStyle(.secondary).lineLimit(1)
+                    .foregroundStyle(current ? Color.purple : Color.primary)
+                HStack(spacing: 6) {
+                    if !library.isOffline(track) { Image(systemName: "icloud").font(.caption2) }
+                    Text(track.artist).lineLimit(1)
+                }
+                .font(.subheadline).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
             if let label = track.fx?.label, !label.isEmpty {
-                Text(label).font(.caption2.weight(.semibold)).foregroundStyle(.purple)
+                Text(label).font(.caption2.weight(.bold)).foregroundStyle(.purple)
+                    .padding(.horizontal, 7).padding(.vertical, 3)
+                    .background(Color.purple.opacity(0.15), in: Capsule())
+                    .lineLimit(1)
             }
-            Image(systemName: library.isOffline(track) ? "arrow.down.circle.fill" : "icloud")
-                .font(.caption)
-                .foregroundStyle(library.isOffline(track) ? Color.green : Color.secondary)
         }
         .contentShape(Rectangle())
+        .opacity(library.isOffline(track) || library.pcOnline ? 1 : 0.45)
     }
 }
 
@@ -155,67 +234,23 @@ struct MiniPlayer: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            HDCover(track: player.current, corner: 6).frame(width: 32, height: 32)
+            HDCover(track: player.current, corner: 8).frame(width: 34, height: 34)
             VStack(alignment: .leading, spacing: 0) {
                 Text(player.current?.title ?? "Nichts läuft").font(.subheadline.weight(.semibold)).lineLimit(1)
-                if let a = player.current?.artist { Text(a).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                Text(player.current?.artist ?? "Tippe einen Song an").font(.caption).foregroundStyle(.secondary).lineLimit(1)
             }
-            Spacer()
-            Button { player.toggle() } label: { Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.title3) }
-                .buttonStyle(.plain)
-            Button { player.next() } label: { Image(systemName: "forward.fill").font(.title3) }
+            Spacer(minLength: 4)
+            Button { player.toggle() } label: {
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.title3)
+                    .contentTransition(.symbolEffect(.replace))
+                    .frame(width: 36, height: 36)
+            }
+            .buttonStyle(.plain)
+            Button { player.next() } label: { Image(systemName: "forward.fill").font(.title3).frame(width: 36, height: 36) }
                 .buttonStyle(.plain)
         }
-        .padding(.horizontal, 14)
+        .padding(.leading, 10).padding(.trailing, 8)
         .contentShape(Rectangle())
-    }
-}
-
-// MARK: - Wecker
-
-struct AlarmView: View {
-    @EnvironmentObject var alarms: Alarms
-
-    var body: some View {
-        NavigationStack {
-            List {
-                Section {
-                    Toggle("Wecker nach Stundenplan", isOn: $alarms.enabled)
-                    if !alarms.status.isEmpty { Text(alarms.status).font(.footnote).foregroundStyle(.secondary) }
-                } footer: {
-                    Text("Die Weckzeiten kommen aus deinem Stundenplan im Hub, Entfälle und Vertretungen eingerechnet. Die Wecker liegen auf dem iPhone und klingeln auch, wenn der PC aus ist.")
-                }
-                Section("Nächste Tage") {
-                    ForEach(alarms.days) { d in
-                        HStack {
-                            VStack(alignment: .leading, spacing: 2) {
-                                Text(dayTitle(d)).font(.body.weight(.semibold))
-                                Text(d.free ? "frei · ausschlafen" : [d.period.map { "\($0). Stunde" }, d.subject].compactMap { $0 }.joined(separator: " · "))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            Spacer()
-                            if d.free { Text("–").foregroundStyle(.secondary) }
-                            else {
-                                Text(d.wake ?? "").font(.title3.monospacedDigit().weight(.semibold))
-                                    .foregroundStyle(alarms.scheduled[d.date] != nil ? Color.purple : Color.secondary)
-                            }
-                        }
-                    }
-                }
-            }
-            .navigationTitle("Wecker")
-            .refreshable { await alarms.refresh() }
-        }
-    }
-
-    private func dayTitle(_ d: WakeDay) -> String {
-        guard let date = d.dayDate else { return d.label ?? d.date }
-        if Calendar.current.isDateInToday(date) { return "Heute" }
-        if Calendar.current.isDateInTomorrow(date) { return "Morgen" }
-        let f = DateFormatter()
-        f.locale = Locale(identifier: "de_DE")
-        f.dateFormat = "EEEE, d. MMM"
-        return f.string(from: date)
     }
 }
 
@@ -223,16 +258,32 @@ struct AlarmView: View {
 
 struct SettingsView: View {
     @EnvironmentObject var library: Library
+    @EnvironmentObject var player: Player
+    @Environment(\.dismiss) private var dismiss
     @State private var link = ""
     @State private var confirmClear = false
 
     var body: some View {
         NavigationStack {
             Form {
-                Section("Verbindung") {
-                    LabeledContent("Hub", value: Config.base?.host ?? "–")
-                    LabeledContent("Status", value: library.pcOnline ? "verbunden" : "nicht erreichbar")
+                Section {
+                    HStack(spacing: 14) {
+                        Image(systemName: library.pcOnline ? "desktopcomputer" : "desktopcomputer.trianglebadge.exclamationmark")
+                            .font(.title2).foregroundStyle(library.pcOnline ? Color.green : Color.secondary)
+                            .frame(width: 44, height: 44)
+                            .background((library.pcOnline ? Color.green : Color.gray).opacity(0.15), in: RoundedRectangle(cornerRadius: 12))
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(library.pcOnline ? "Hub verbunden" : "Hub nicht erreichbar").font(.headline)
+                            Text(Config.base?.host ?? "–").font(.caption).foregroundStyle(.secondary)
+                        }
+                    }
                     Button("Jetzt verbinden") { Task { await library.refresh() } }
+                } header: { Text("PC") }
+                Section {
+                    Toggle("Lyrics auf Sperrbildschirm & Dynamic Island", isOn: $player.liveLyrics)
+                    Toggle("3D-Musik (Spatial Audio)", isOn: $player.spatial)
+                } header: { Text("Wiedergabe") } footer: {
+                    Text("Cover, Knöpfe und Fortschritt zeigt Apple selbst auf dem Sperrbildschirm – Hub ergänzt nur die leuchtenden Lyrics. AirPods: rausnehmen pausiert, wieder rein spielt weiter.")
                 }
                 Section("Offline") {
                     LabeledContent("Songs", value: "\(library.offlineCount) von \(library.tracks.count)")
@@ -252,9 +303,12 @@ struct SettingsView: View {
                 } header: { Text("Neu verbinden") } footer: { Text("QR-Code vom Hub mit der Kamera scannen oder den Link hier einfügen.") }
                 Section {
                     LabeledContent("Version", value: "\(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "") (\(Bundle.main.infoDictionary?["CFBundleVersion"] as? String ?? ""))")
+                    LabeledContent("GTA-Karte", value: "GTADB.ORG · CC BY 4.0")
                 }
             }
-            .navigationTitle("Mehr")
+            .navigationTitle("Einstellungen")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Fertig") { dismiss() } } }
             .confirmationDialog("Alle Offline-Songs löschen und neu laden?", isPresented: $confirmClear, titleVisibility: .visible) {
                 Button("Neu laden", role: .destructive) { library.clearOffline(); Task { await library.sync() } }
             }

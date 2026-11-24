@@ -34,6 +34,8 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         UILaunchScreen: {}
         UIBackgroundModes: [audio, fetch]
+        BGTaskSchedulerPermittedIdentifiers: [hub.school.refresh]
+        NSCameraUsageDescription: "Hub scannt damit den WebUntis-QR-Code für deinen Stundenplan."
         UISupportedInterfaceOrientations: [UIInterfaceOrientationPortrait]
         NSAlarmKitUsageDescription: "Hub stellt deine Wecker passend zum Stundenplan."
         NSSupportsLiveActivities: true

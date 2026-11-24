@@ -20,11 +20,30 @@ struct Landmark: Hashable {
     let ok: Bool
 }
 
+struct MapLabelData: Hashable {
+    let name: String
+    let tier: Int        // 1 = Region, 2 = Stadtteil, 3 = Straße
+    let x: Double
+    let y: Double
+}
+
 final class Leonida: @unchecked Sendable {
     static let shared = Leonida()
     let landmarks: [Landmark]
     let anchors: [[Double]]
     let credit: String
+    /// Ortsnamen wie auf der Spielkarte (aus den GTADB-Gebietsnamen, tools/labels.js)
+    lazy var labels: [MapLabelData] = {
+        guard let url = Bundle.main.url(forResource: "leonida-labels", withExtension: "json"),
+              let data = try? Data(contentsOf: url),
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let list = root["labels"] as? [[String: Any]] else { return [] }
+        return list.compactMap { l in
+            guard let n = l["n"] as? String, let t = (l["t"] as? NSNumber)?.intValue,
+                  let x = (l["x"] as? NSNumber)?.doubleValue, let y = (l["y"] as? NSNumber)?.doubleValue else { return nil }
+            return MapLabelData(name: n, tier: t, x: x, y: y)
+        }
+    }()
     lazy var warp: Warp = Warp(pairs: landmarks.filter { $0.ok && $0.lat != nil }.map { [$0.lat!, $0.lon!, $0.x, $0.y] }, anchors: anchors)
 
     init() {
@@ -283,6 +302,50 @@ final class LandmarkPin: NSObject, MKAnnotation {
     init(_ lm: Landmark) { self.lm = lm; coordinate = GameGeo.coordinate(x: lm.x, y: lm.y) }
 }
 
+/// Ortsname auf der Karte (wie auf der Spielkarte: große Regionen, kleinere Stadtteile, Straßen ganz nah)
+final class MapLabel: NSObject, MKAnnotation {
+    let data: MapLabelData
+    let coordinate: CLLocationCoordinate2D
+    init(_ d: MapLabelData) { data = d; coordinate = GameGeo.coordinate(x: d.x, y: d.y) }
+}
+
+final class MapLabelView: MKAnnotationView {
+    private let label = UILabel()
+
+    override init(annotation: MKAnnotation?, reuseIdentifier: String?) {
+        super.init(annotation: annotation, reuseIdentifier: reuseIdentifier)
+        isUserInteractionEnabled = false
+        canShowCallout = false
+        collisionMode = .none
+        displayPriority = .required
+        label.numberOfLines = 2
+        label.textAlignment = .center
+        addSubview(label)
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.95
+        layer.shadowRadius = 2.5
+        layer.shadowOffset = .zero
+        configure()
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+    override var annotation: MKAnnotation? { didSet { configure() } }
+
+    private func configure() {
+        guard let a = annotation as? MapLabel else { return }
+        let t = a.data.tier
+        let size: CGFloat = t == 1 ? 19 : t == 2 ? 12.5 : 10.5
+        let weight: UIFont.Weight = t == 1 ? .black : t == 2 ? .heavy : .semibold
+        let font = UIFont.systemFont(ofSize: size, weight: weight, width: .condensed)
+        let color = t == 1 ? UIColor.white : t == 2 ? UIColor.white.withAlphaComponent(0.92) : UIColor(white: 0.95, alpha: 0.8)
+        label.attributedText = NSAttributedString(string: t == 3 ? a.data.name : a.data.name.uppercased(),
+                                                  attributes: [.font: font, .foregroundColor: color, .kern: t == 1 ? 2.4 : t == 2 ? 1.3 : 0.3])
+        let s = label.sizeThatFits(CGSize(width: t == 1 ? 200 : 130, height: 80))
+        label.frame = CGRect(origin: .zero, size: s)
+        bounds = CGRect(origin: .zero, size: s)
+    }
+}
+
 final class DropPin: NSObject, MKAnnotation {
     @objc dynamic var coordinate: CLLocationCoordinate2D
     var title: String?
@@ -318,7 +381,10 @@ struct GTAMapView: UIViewRepresentable {
         m.isPitchEnabled = false
         m.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "lm")
         m.register(MKMarkerAnnotationView.self, forAnnotationViewWithReuseIdentifier: "drop")
+        m.register(MapLabelView.self, forAnnotationViewWithReuseIdentifier: "label")
         m.setVisibleMapRect(GameGeo.leonida, edgePadding: UIEdgeInsets(top: 40, left: 10, bottom: 40, right: 10), animated: false)
+        context.coordinator.labels = Leonida.shared.labels.map(MapLabel.init)
+        m.addAnnotations(context.coordinator.labels)
         let tap = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.tapped(_:)))
         tap.delegate = context.coordinator
         m.addGestureRecognizer(tap)
@@ -340,22 +406,55 @@ struct GTAMapView: UIViewRepresentable {
     final class Coordinator: NSObject, MKMapViewDelegate, UIGestureRecognizerDelegate {
         var parent: GTAMapView
         weak var map: MKMapView?
+        var labels: [MapLabel] = []
         private var pins: [LandmarkPin] = []
+        private var wantPins = false
         private var showing = false
         private var drop: DropPin?
+        private var lastTiers = -1
 
         init(_ p: GTAMapView) { parent = p }
 
-        func setLandmarks(_ on: Bool) {
-            guard let m = map, on != showing else { return }
-            showing = on
-            if on {
-                if pins.isEmpty { pins = Leonida.shared.visible.map(LandmarkPin.init) }
-                m.addAnnotations(pins)
-            } else {
-                m.removeAnnotations(pins)
+        /// Spiel-Meter pro Bildschirmpunkt (klein = nah dran)
+        private func metersPerPoint(_ m: MKMapView) -> Double {
+            m.visibleMapRect.width / max(Double(m.bounds.width), 1) * 32768 / GameGeo.world
+        }
+        private func tierVisible(_ tier: Int, _ mpp: Double) -> Bool {
+            switch tier {
+            case 1: return mpp > 5
+            case 2: return mpp < 16
+            default: return mpp < 2.4
             }
         }
+
+        func setLandmarks(_ on: Bool) {
+            wantPins = on
+            updateZoom()
+        }
+
+        /// Je nach Zoom: Namen ein-/ausblenden, Gebäude-Pins erst beim Reinzoomen (Übersicht bleibt sauber wie im Spiel)
+        func updateZoom() {
+            guard let m = map, m.bounds.width > 0 else { return }
+            let mpp = metersPerPoint(m)
+            let pinsNow = wantPins && mpp < 7
+            if pinsNow != showing {
+                showing = pinsNow
+                if pinsNow {
+                    if pins.isEmpty { pins = Leonida.shared.visible.map(LandmarkPin.init) }
+                    m.addAnnotations(pins)
+                } else {
+                    m.removeAnnotations(pins)
+                }
+            }
+            let tiers = (tierVisible(1, mpp) ? 1 : 0) | (tierVisible(2, mpp) ? 2 : 0) | (tierVisible(3, mpp) ? 4 : 0)
+            guard tiers != lastTiers else { return }
+            lastTiers = tiers
+            UIView.animate(withDuration: 0.25) {
+                for l in self.labels { m.view(for: l)?.alpha = self.tierVisible(l.data.tier, mpp) ? 1 : 0 }
+            }
+        }
+
+        func mapViewDidChangeVisibleRegion(_ mapView: MKMapView) { updateZoom() }
 
         func syncDrop(_ pick: MapPick?) {
             guard let m = map else { return }
@@ -374,6 +473,12 @@ struct GTAMapView: UIViewRepresentable {
         }
 
         func mapView(_ mapView: MKMapView, viewFor annotation: MKAnnotation) -> MKAnnotationView? {
+            if let l = annotation as? MapLabel {
+                let v = mapView.dequeueReusableAnnotationView(withIdentifier: "label", for: l)
+                v.annotation = l
+                v.alpha = tierVisible(l.data.tier, metersPerPoint(mapView)) ? 1 : 0
+                return v
+            }
             if let d = annotation as? DropPin {
                 let v = mapView.dequeueReusableAnnotationView(withIdentifier: "drop", for: d) as! MKMarkerAnnotationView
                 v.markerTintColor = .systemPink

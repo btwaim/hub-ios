@@ -197,37 +197,32 @@ struct LockScreenActivity: View {
     let state: NowPlayingAttributes.ContentState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 12) {
-                CoverThumb(file: state.coverFile, size: 54, corner: 12)
-                    .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(state.title).font(.headline).lineLimit(1)
-                    HStack(spacing: 6) {
-                        Text(state.artist).lineLimit(1)
-                        if !state.fx.isEmpty { Text("· " + state.fx).foregroundStyle(hubPurple).lineLimit(1) }
-                    }
-                    .font(.subheadline)
-                    .foregroundStyle(.white.opacity(0.65))
-                }
-                Spacer(minLength: 6)
-                Controls(isPlaying: state.isPlaying, size: 22, spacing: 18)
+        // Den Player (Cover, Knöpfe, Fortschritt) zeigt Apple selbst darunter – hier nur das, was Apple nicht kann:
+        // die mitlaufenden Lyrics mit Leuchten wie am PC
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                Bars(playing: state.isPlaying, color: .white.opacity(0.75))
+                Text(state.title).font(.caption.weight(.bold)).lineLimit(1)
+                Text(state.artist).font(.caption).foregroundStyle(.white.opacity(0.55)).lineLimit(1)
+                Spacer(minLength: 0)
+                if !state.fx.isEmpty { Text(state.fx).font(.caption2.weight(.heavy)).foregroundStyle(hubPurple).lineLimit(1) }
             }
             if !state.lyric.isEmpty {
-                VStack(alignment: .leading, spacing: 2) {
-                    GlowLine(text: state.lyric, size: 17)
-                        .transition(.push(from: .bottom))
-                        .id(state.lyric)
-                    if !state.nextLyric.isEmpty {
-                        Text(state.nextLyric).font(.system(size: 13, weight: .bold)).foregroundStyle(.white.opacity(0.35)).lineLimit(1)
-                    }
+                GlowLine(text: state.lyric, size: 21)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .transition(.push(from: .bottom))
+                    .id(state.lyric)
+                if !state.nextLyric.isEmpty {
+                    Text(state.nextLyric).font(.system(size: 14, weight: .bold)).foregroundStyle(.white.opacity(0.35)).lineLimit(1)
+                        .blur(radius: 0.4)
                 }
-                .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                Text(state.isPlaying ? "♪ ♪ ♪" : "Pausiert")
+                    .font(.system(size: 19, weight: .heavy)).foregroundStyle(.white.opacity(0.5))
             }
-            ProgressRow(state: state)
         }
         .foregroundStyle(.white)
-        .padding(14)
-        .background { CoverGlow(file: state.coverFile, dim: 0.4) }
+        .padding(.horizontal, 16).padding(.vertical, 13)
+        .background { CoverGlow(file: state.coverFile, dim: 0.55) }
     }
 }

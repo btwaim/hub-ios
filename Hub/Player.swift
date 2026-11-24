@@ -12,7 +12,9 @@ final class Player: ObservableObject {
     enum Sleep: Equatable { case off, minutes(Int), endOfSong }
 
     @Published private(set) var current: Track?
-    @Published private(set) var isPlaying = false
+    @Published private(set) var isPlaying = false {
+        didSet { if oldValue != isPlaying { playStateChanged() } }
+    }
     @Published private(set) var time: Double = 0
     @Published private(set) var duration: Double = 0
     /// Tempo, das schon in der gespielten Datei steckt (für die Lyrics-Zeit)
@@ -26,6 +28,13 @@ final class Player: ObservableObject {
     }
     @Published var spatial: Bool = UserDefaults.standard.bool(forKey: "spatial") {
         didSet { UserDefaults.standard.set(spatial, forKey: "spatial"); applySpatial() }
+    }
+    /// Lyrics auf dem Sperrbildschirm + Dynamic Island (Live-Aktivität)
+    @Published var liveLyrics: Bool = UserDefaults.standard.object(forKey: "liveLyrics") as? Bool ?? true {
+        didSet {
+            UserDefaults.standard.set(liveLyrics, forKey: "liveLyrics")
+            if liveLyrics { pushSurfaces(track: true) } else { LiveActivityManager.shared.end() }
+        }
     }
     @Published private(set) var sleep: Sleep = .off
     @Published private(set) var sleepEnds: Date?
@@ -45,6 +54,28 @@ final class Player: ObservableObject {
     private var thumbFile: String?
     private var resumeAfterRoute = false
     private var ticks = 0
+    private let keepAlive = KeepAlive()
+    private var idleEnd: Task<Void, Never>?
+    /// So lange bleiben Sperrbildschirm-Lyrics + Dynamic Island nach dem Pausieren stehen
+    static let idleSeconds: Double = 180
+
+    /// Pause → nach 3 Minuten ohne Musik verschwinden Lyrics-Anzeige und Dynamic Island.
+    /// Die App bleibt dafür so lange wach (stilles Audio), sonst würde iOS sie vorher einfrieren.
+    private func playStateChanged() {
+        idleEnd?.cancel()
+        if isPlaying {
+            keepAlive.stop()
+            return
+        }
+        guard current != nil else { return }
+        keepAlive.start()
+        idleEnd = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .seconds(Player.idleSeconds))
+            guard let self, !Task.isCancelled, !self.isPlaying else { return }
+            LiveActivityManager.shared.end()
+            self.keepAlive.stop()
+        }
+    }
 
     init() {
         try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, policy: .longFormAudio)
@@ -328,9 +359,11 @@ final class Player: ObservableObject {
         let start = isPlaying ? Date().addingTimeInterval(-time / r) : nil
         let end = start.map { $0.addingTimeInterval(duration / r) }
         let fxLabel = currentFx.label
-        LiveActivityManager.shared.update(.init(title: t.title, artist: t.artist, isPlaying: isPlaying, lyric: cur, nextLyric: nxt,
-                                                 start: start, end: end, coverFile: thumbFile, fx: fxLabel,
-                                                 elapsed: time / r, duration: duration / r))
+        if liveLyrics {
+            LiveActivityManager.shared.update(.init(title: t.title, artist: t.artist, isPlaying: isPlaying, lyric: cur, nextLyric: nxt,
+                                                     start: start, end: end, coverFile: thumbFile, fx: fxLabel,
+                                                     elapsed: time / r, duration: duration / r))
+        }
         guard track else { return }
         // Lyrics als Zeitplan fürs Widget: jede Zeile mit ihrer echten Uhrzeit
         var wl: [WidgetLyric] = []

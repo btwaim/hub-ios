@@ -69,6 +69,39 @@ final class BassProcessor: @unchecked Sendable {
     }
 }
 
+/// Spielt Stille, damit die App nach dem Pausieren ein paar Minuten wach bleibt
+/// (nötig, um Sperrbildschirm-Anzeige/Dynamic Island nach 3 Minuten ohne Musik selbst zu entfernen).
+final class KeepAlive {
+    private var engine: AVAudioEngine?
+    private var node: AVAudioPlayerNode?
+
+    func start() {
+        guard engine == nil else { return }
+        let e = AVAudioEngine(), n = AVAudioPlayerNode()
+        guard let fmt = AVAudioFormat(standardFormatWithSampleRate: 44100, channels: 2),
+              let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 44100) else { return }
+        buf.frameLength = 44100          // eine Sekunde Stille
+        if let ch = buf.floatChannelData {
+            for c in 0..<Int(fmt.channelCount) { ch[c].update(repeating: 0, count: 44100) }
+        }
+        e.attach(n)
+        e.connect(n, to: e.mainMixerNode, format: fmt)
+        e.mainMixerNode.outputVolume = 0
+        do { try e.start() } catch { return }
+        n.scheduleBuffer(buf, at: nil, options: .loops)
+        n.play()
+        engine = e
+        node = n
+    }
+
+    func stop() {
+        node?.stop()
+        engine?.stop()
+        node = nil
+        engine = nil
+    }
+}
+
 enum AudioTap {
     /// Hängt den Bass-Prozessor an ein AVPlayerItem (über einen Audio-Mix)
     static func attach(_ processor: BassProcessor, to item: AVPlayerItem) async {

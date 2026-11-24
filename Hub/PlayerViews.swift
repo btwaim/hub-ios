@@ -1,24 +1,34 @@
 import SwiftUI
+import AVKit
 
-// MARK: - HD-Cover
+// MARK: - Cover (nie ein falsches: Ergebnis zählt nur, wenn noch derselbe Song gemeint ist)
 
 struct HDCover: View {
     let track: Track?
     var corner: CGFloat = 18
     @EnvironmentObject var library: Library
     @State private var image: UIImage?
+    @State private var shownID: String?
 
     var body: some View {
         Color.clear.aspectRatio(1, contentMode: .fit)
             .overlay {
-                if let image { Image(uiImage: image).resizable().scaledToFill() }
-                else { CoverImage(url: track?.big ?? track?.cover, size: nil, corner: 0) }
+                ZStack {
+                    CoverImage(url: track?.cover, size: nil, corner: 0)
+                    if let image, shownID == track?.id {
+                        Image(uiImage: image).resizable().scaledToFill().transition(.opacity)
+                    }
+                }
             }
             .clipShape(RoundedRectangle(cornerRadius: corner, style: .continuous))
+            .animation(.easeOut(duration: 0.25), value: shownID)
             .task(id: track?.id) {
-                image = nil
-                guard let t = track else { return }
-                image = await ArtStore.shared.image(for: t, allowNetwork: library.pcOnline)
+                guard let t = track else { image = nil; shownID = nil; return }
+                let id = t.id
+                let img = await ArtStore.shared.image(for: t, allowNetwork: library.pcOnline)
+                guard !Task.isCancelled, track?.id == id else { return }
+                image = img
+                shownID = img == nil ? nil : id
             }
     }
 }
@@ -27,24 +37,77 @@ struct HDCover: View {
 struct CoverBackdrop: View {
     let track: Track?
     @State private var image: UIImage?
+    @State private var shownID: String?
 
     var body: some View {
         ZStack {
             Color.black
-            if let image {
+            if let image, shownID == track?.id {
                 Image(uiImage: image).resizable().scaledToFill()
-                    .blur(radius: 70, opaque: true)
-                    .saturation(1.4)
-                    .opacity(0.75)
+                    .blur(radius: 80, opaque: true)
+                    .saturation(1.5)
+                    .opacity(0.8)
                     .transition(.opacity)
             }
-            LinearGradient(colors: [.black.opacity(0.15), .black.opacity(0.65)], startPoint: .top, endPoint: .bottom)
+            LinearGradient(colors: [.black.opacity(0.05), .black.opacity(0.35), .black.opacity(0.7)], startPoint: .top, endPoint: .bottom)
         }
         .ignoresSafeArea()
-        .animation(.easeInOut(duration: 0.8), value: image != nil)
+        .animation(.easeInOut(duration: 0.7), value: shownID)
         .task(id: track?.id) {
-            guard let t = track else { image = nil; return }
-            if let c = await ArtStore.shared.cached(t) { image = c } else { image = await CoverCache.shared.image(for: t.big ?? t.cover) }
+            guard let t = track else { image = nil; shownID = nil; return }
+            let id = t.id
+            let img = await ArtStore.shared.image(for: t, allowNetwork: false)
+            guard !Task.isCancelled, track?.id == id else { return }
+            image = img
+            shownID = id
+        }
+    }
+}
+
+/// AirPlay / AirPods-Auswahl (System-Knopf)
+struct RoutePicker: UIViewRepresentable {
+    func makeUIView(context: Context) -> AVRoutePickerView {
+        let v = AVRoutePickerView()
+        v.tintColor = UIColor.white.withAlphaComponent(0.55)
+        v.activeTintColor = UIColor(red: 0.66, green: 0.45, blue: 1, alpha: 1)
+        v.prioritizesVideoDevices = false
+        return v
+    }
+    func updateUIView(_ uiView: AVRoutePickerView, context: Context) {}
+}
+
+/// Dünner Fortschrittsbalken wie bei Apple Music (wird beim Ziehen dicker)
+struct ScrubBar: View {
+    let time: Double
+    let duration: Double
+    var onSeek: (Double) -> Void
+    @State private var drag: Double?
+
+    var body: some View {
+        let shown = drag ?? time
+        VStack(spacing: 6) {
+            GeometryReader { g in
+                let p = duration > 0 ? min(1, max(0, shown / duration)) : 0
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.white.opacity(0.2))
+                    Capsule().fill(Color.white.opacity(drag != nil ? 1 : 0.85)).frame(width: max(0, g.size.width * p))
+                }
+                .frame(height: drag != nil ? 12 : 6)
+                .frame(maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .gesture(DragGesture(minimumDistance: 0)
+                    .onChanged { v in drag = min(1, max(0, v.location.x / max(g.size.width, 1))) * duration }
+                    .onEnded { _ in if let d = drag { onSeek(d) }; drag = nil })
+                .animation(.spring(response: 0.3, dampingFraction: 0.7), value: drag != nil)
+            }
+            .frame(height: 20)
+            HStack {
+                Text(formatTime(shown))
+                Spacer()
+                Text("-" + formatTime(max(0, duration - shown)))
+            }
+            .font(.caption2.monospacedDigit().weight(.semibold))
+            .foregroundStyle(.white.opacity(drag != nil ? 0.9 : 0.5))
         }
     }
 }
@@ -57,93 +120,115 @@ struct PlayerView: View {
     @EnvironmentObject var lyrics: Lyrics
     @EnvironmentObject var library: Library
     @AppStorage("playerMode") private var modeRaw = 0
-    @State private var scrub: Double?
     @State private var showFx = false
 
     private var mode: Mode { Mode(rawValue: modeRaw) ?? .cover }
 
     var body: some View {
-        ZStack {
-            CoverBackdrop(track: player.current)
-            VStack(spacing: 16) {
-                Capsule().fill(Color.white.opacity(0.35)).frame(width: 40, height: 5).padding(.top, 10)
-                Group {
+        GeometryReader { geo in
+            let side = min(geo.size.width - 72, geo.size.height * 0.4, 330)
+            ZStack {
+                CoverBackdrop(track: player.current)
+                VStack(spacing: 0) {
+                    Capsule().fill(Color.white.opacity(0.3)).frame(width: 36, height: 5).padding(.top, 8)
                     switch mode {
                     case .cover:
-                        Spacer(minLength: 0)
-                        HDCover(track: player.current)
-                            .shadow(color: .black.opacity(0.55), radius: 30, y: 18)
-                            .scaleEffect(player.isPlaying ? 1 : 0.88)
-                            .animation(.spring(response: 0.5, dampingFraction: 0.7), value: player.isPlaying)
-                        Spacer(minLength: 0)
+                        Spacer(minLength: 12)
+                        HDCover(track: player.current, corner: 14)
+                            .frame(width: side, height: side)
+                            .shadow(color: .black.opacity(0.45), radius: 26, y: 16)
+                            .scaleEffect(player.isPlaying ? 1 : 0.86)
+                            .animation(.spring(response: 0.55, dampingFraction: 0.72), value: player.isPlaying)
+                        Spacer(minLength: 12)
+                        titleRow
                     case .lyrics:
-                        LyricsGlowView()
+                        compactHeader.padding(.top, 14)
+                        LyricsGlowView().frame(maxHeight: .infinity)
                     case .mp3:
-                        Spacer(minLength: 0)
-                        MP3PlayerView()
-                        Spacer(minLength: 0)
+                        compactHeader.padding(.top, 14)
+                        Spacer(minLength: 8)
+                        MP3PlayerView().frame(width: side + 24, height: side + 24)
+                        Spacer(minLength: 8)
                     }
+                    ScrubBar(time: player.time, duration: player.duration) { player.seek(to: $0) }
+                        .padding(.top, 14)
+                    controls.padding(.vertical, 14)
+                    bottomRow.padding(.bottom, 6)
                 }
-                .frame(maxHeight: .infinity)
-                titleRow
-                progress
-                controls
-                bottomRow
+                .padding(.horizontal, 28)
+                .padding(.bottom, 12)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 20)
+            .foregroundStyle(.white)
         }
-        .foregroundStyle(.white)
         .task(id: player.current?.id) { await lyrics.load(player.current) }
-        .sheet(isPresented: $showFx) { FxSheet().presentationDetents([.medium]).presentationBackground(.ultraThinMaterial) }
+        .sheet(isPresented: $showFx) {
+            FxSheet()
+                .presentationDetents([.height(470)])
+                .presentationBackground(.ultraThinMaterial)
+                .presentationCornerRadius(32)
+        }
+    }
+
+    private var fxButton: some View {
+        Button { showFx = true } label: {
+            Image(systemName: "slider.horizontal.3")
+                .font(.system(size: 16, weight: .semibold))
+                .frame(width: 34, height: 34)
+                .background(Color.white.opacity(player.currentFx.label.isEmpty ? 0.12 : 0.28), in: Circle())
+        }
+        .buttonStyle(.plain)
     }
 
     private var titleRow: some View {
-        HStack(alignment: .center) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(player.current?.title ?? "Nichts läuft").font(.title2.bold()).lineLimit(1)
-                Text(player.current?.artist ?? "").font(.body).foregroundStyle(.white.opacity(0.65)).lineLimit(1)
-            }
-            Spacer()
-            Button { showFx = true } label: {
-                let label = player.currentFx.label
-                HStack(spacing: 5) {
-                    Image(systemName: "slider.horizontal.3")
-                    if !label.isEmpty { Text(label).lineLimit(1) }
+        HStack(alignment: .center, spacing: 12) {
+            VStack(alignment: .leading, spacing: 3) {
+                Text(player.current?.title ?? "Nichts läuft")
+                    .font(.system(size: 21, weight: .bold)).lineLimit(1)
+                HStack(spacing: 6) {
+                    Text(player.current?.artist ?? "").lineLimit(1)
+                    let fx = player.currentFx.label
+                    if !fx.isEmpty {
+                        Text(fx).font(.caption2.weight(.heavy)).padding(.horizontal, 6).padding(.vertical, 2)
+                            .background(Color.white.opacity(0.18), in: Capsule()).lineLimit(1)
+                    }
                 }
-                .font(.caption.weight(.semibold))
-                .padding(.horizontal, 10).padding(.vertical, 7)
-                .background(.ultraThinMaterial, in: Capsule())
+                .font(.system(size: 17))
+                .foregroundStyle(.white.opacity(0.6))
             }
-            .buttonStyle(.plain)
+            Spacer(minLength: 0)
+            fxButton
         }
     }
 
-    private var progress: some View {
-        VStack(spacing: 4) {
-            Slider(value: Binding(get: { scrub ?? player.time }, set: { scrub = $0 }), in: 0...max(player.duration, 1)) { editing in
-                if !editing, let s = scrub { player.seek(to: s); scrub = nil }
+    private var compactHeader: some View {
+        HStack(spacing: 12) {
+            HDCover(track: player.current, corner: 8).frame(width: 52, height: 52)
+                .shadow(color: .black.opacity(0.4), radius: 8, y: 4)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(player.current?.title ?? "").font(.headline).lineLimit(1)
+                Text(player.current?.artist ?? "").font(.subheadline).foregroundStyle(.white.opacity(0.6)).lineLimit(1)
             }
-            .tint(.white)
-            HStack {
-                Text(formatTime(scrub ?? player.time))
-                Spacer()
-                Text("-" + formatTime(max(0, player.duration - (scrub ?? player.time))))
-            }
-            .font(.caption.monospacedDigit()).foregroundStyle(.white.opacity(0.6))
+            Spacer(minLength: 0)
+            fxButton
         }
     }
 
     private var controls: some View {
         HStack {
-            Button { player.shuffle.toggle() } label: { Image(systemName: "shuffle").foregroundStyle(player.shuffle ? Color.purple : .white.opacity(0.6)) }
+            Button { player.shuffle.toggle() } label: {
+                Image(systemName: "shuffle").font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(player.shuffle ? Color.white : .white.opacity(0.45))
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(player.shuffle ? 0.2 : 0), in: Circle())
+            }
             Spacer()
             Button { player.previous() } label: { Image(systemName: "backward.fill").font(.system(size: 30)) }
             Spacer()
             Button { player.toggle() } label: {
-                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill").font(.system(size: 44))
+                Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                    .font(.system(size: 42))
                     .contentTransition(.symbolEffect(.replace))
-                    .frame(width: 72, height: 72)
+                    .frame(width: 64, height: 64)
             }
             Spacer()
             Button { player.next() } label: { Image(systemName: "forward.fill").font(.system(size: 30)) }
@@ -151,27 +236,32 @@ struct PlayerView: View {
             Button {
                 player.repeatMode = Player.Repeat(rawValue: (player.repeatMode.rawValue + 1) % 3) ?? .off
             } label: {
-                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .foregroundStyle(player.repeatMode == .off ? .white.opacity(0.6) : Color.purple)
+                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat").font(.system(size: 17, weight: .semibold))
+                    .foregroundStyle(player.repeatMode == .off ? .white.opacity(0.45) : Color.white)
+                    .frame(width: 36, height: 36)
+                    .background(Color.white.opacity(player.repeatMode == .off ? 0 : 0.2), in: Circle())
             }
         }
         .buttonStyle(.plain)
-        .font(.title3)
+        .sensoryFeedback(.impact(weight: .light), trigger: player.isPlaying)
     }
 
     private var bottomRow: some View {
-        HStack(spacing: 26) {
-            Button { withAnimation(.spring) { modeRaw = mode == .lyrics ? 0 : 1 } } label: {
-                Image(systemName: "quote.bubble").foregroundStyle(mode == .lyrics ? Color.purple : .white.opacity(0.6))
-            }
-            Button { withAnimation(.spring) { modeRaw = mode == .mp3 ? 0 : 2 } } label: {
-                Image(systemName: "ipod").foregroundStyle(mode == .mp3 ? Color.purple : .white.opacity(0.6))
-            }
+        HStack {
+            modeButton(.lyrics, "quote.bubble.fill", "quote.bubble")
+            Spacer()
+            modeButton(.mp3, "ipod", "ipod")
+            Spacer()
+            RoutePicker().frame(width: 30, height: 30)
             Spacer()
             Button { player.spatial.toggle() } label: {
-                Image(systemName: "airpods.pro").symbolEffect(.bounce, value: player.spatial)
-                    .foregroundStyle(player.spatial ? Color.purple : .white.opacity(0.6))
+                Image(systemName: "airpods.pro")
+                    .symbolEffect(.bounce, value: player.spatial)
+                    .foregroundStyle(player.spatial ? Color.white : .white.opacity(0.45))
+                    .frame(width: 34, height: 34)
+                    .background(Color.white.opacity(player.spatial ? 0.2 : 0), in: Circle())
             }
+            Spacer()
             Menu {
                 Button("Aus") { player.setSleep(.off) }
                 Button("15 Minuten") { player.setSleep(.minutes(15)) }
@@ -179,16 +269,26 @@ struct PlayerView: View {
                 Button("60 Minuten") { player.setSleep(.minutes(60)) }
                 Button("Nach diesem Song") { player.setSleep(.endOfSong) }
             } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "moon.zzz")
-                    if let end = player.sleepEnds { Text(end, style: .timer).monospacedDigit().font(.caption) }
-                    else if player.sleep == .endOfSong { Text("Songende").font(.caption) }
+                HStack(spacing: 4) {
+                    Image(systemName: "moon.zzz.fill")
+                    if let end = player.sleepEnds { Text(end, style: .timer).monospacedDigit().font(.caption2.weight(.bold)) }
                 }
-                .foregroundStyle(player.sleep == .off ? .white.opacity(0.6) : Color.purple)
+                .foregroundStyle(player.sleep == .off ? .white.opacity(0.45) : Color.white)
+                .frame(minWidth: 34, minHeight: 34)
             }
         }
-        .font(.title3)
+        .font(.system(size: 18))
         .buttonStyle(.plain)
+        .padding(.horizontal, 4)
+    }
+
+    private func modeButton(_ m: Mode, _ on: String, _ off: String) -> some View {
+        Button { withAnimation(.spring(response: 0.45, dampingFraction: 0.85)) { modeRaw = mode == m ? 0 : m.rawValue } } label: {
+            Image(systemName: mode == m ? on : off)
+                .foregroundStyle(mode == m ? Color.white : .white.opacity(0.45))
+                .frame(width: 34, height: 34)
+                .background(Color.white.opacity(mode == m ? 0.2 : 0), in: Circle())
+        }
     }
 }
 
@@ -200,44 +300,52 @@ struct FxSheet: View {
     @State private var rate: Double = 1
     @State private var bass: Double = 0
     @State private var reverb = false
-    private let rates: [Double] = [0.8, 0.9, 1, 1.1, 1.25, 1.5]
+
+    private struct Preset: Identifiable { let id: String; let icon: String; let rate: Double; let bass: Double; let reverb: Bool }
+    private let presets = [
+        Preset(id: "Normal", icon: "circle", rate: 1, bass: 0, reverb: false),
+        Preset(id: "Sped up", icon: "hare.fill", rate: 1.15, bass: 0, reverb: false),
+        Preset(id: "Nightcore", icon: "bolt.fill", rate: 1.3, bass: 0, reverb: false),
+        Preset(id: "Slowed", icon: "tortoise.fill", rate: 0.85, bass: 0, reverb: true),
+        Preset(id: "Bass", icon: "speaker.wave.3.fill", rate: 1, bass: 50, reverb: false)
+    ]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack {
+        VStack(alignment: .leading, spacing: 20) {
+            HStack(alignment: .firstTextBaseline) {
                 Text("Sound").font(.title2.bold())
                 Spacer()
-                Button("Normal") { rate = 1; bass = 0; reverb = false; apply() }
-                    .buttonStyle(.bordered).tint(.white)
+                if let t = player.current { Text(t.title).font(.footnote).foregroundStyle(.secondary).lineLimit(1) }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label("Tempo", systemImage: "gauge.with.dots.needle.67percent")
-                    Spacer()
-                    Text(String(format: "%.2f×", rate) + (rate < 1 ? " · Slowed" : rate > 1 ? " · Sped up" : "")).monospacedDigit().foregroundStyle(.secondary)
-                }
-                Slider(value: $rate, in: 0.7...2, step: 0.05) { e in if !e { apply() } }.tint(.purple)
-                HStack {
-                    ForEach(rates, id: \.self) { r in
-                        Button(String(format: "%g×", r)) { rate = r; apply() }
-                            .font(.caption.weight(.semibold))
-                            .buttonStyle(.bordered)
-                            .tint(abs(rate - r) < 0.001 ? Color.purple : Color.gray)
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(presets) { p in
+                        let on = abs(rate - p.rate) < 0.001 && abs(bass - p.bass) < 0.5 && reverb == p.reverb
+                        Button {
+                            rate = p.rate; bass = p.bass; reverb = p.reverb; apply()
+                        } label: {
+                            Label(p.id, systemImage: p.icon)
+                                .font(.subheadline.weight(.semibold))
+                                .padding(.horizontal, 14).padding(.vertical, 10)
+                                .background(on ? Color.purple : Color.white.opacity(0.1), in: Capsule())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
             }
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    Label("Bass-Boost", systemImage: "speaker.wave.3.fill")
-                    Spacer()
-                    Text(bass > 0 ? "\(Int(bass)) %" : "aus").monospacedDigit().foregroundStyle(.secondary)
-                }
-                Slider(value: $bass, in: 0...100, step: 5) { e in if !e { apply() } }.tint(.purple)
+            sliderRow("Tempo", "gauge.with.dots.needle.67percent", String(format: "%.2f×", rate)) {
+                Slider(value: $rate, in: 0.7...2, step: 0.05) { e in if !e { apply() } }
             }
-            Toggle(isOn: Binding(get: { reverb }, set: { reverb = $0; apply() })) { Label("Hall", systemImage: "waveform.path") }
-                .tint(.purple)
-            Text(status).font(.footnote).foregroundStyle(.secondary)
+            sliderRow("Bass", "speaker.wave.3.fill", bass > 0 ? "\(Int(bass)) %" : "aus") {
+                Slider(value: $bass, in: 0...100, step: 5) { e in if !e { apply() } }
+            }
+            Toggle(isOn: Binding(get: { reverb }, set: { reverb = $0; apply() })) {
+                Label("Hall", systemImage: "waveform.path").font(.subheadline.weight(.semibold))
+            }
+            Label(status, systemImage: statusIcon)
+                .font(.footnote).foregroundStyle(.secondary)
         }
+        .tint(.purple)
         .padding(24)
         .onAppear {
             let f = player.currentFx
@@ -245,12 +353,28 @@ struct FxSheet: View {
         }
     }
 
+    private func sliderRow<S: View>(_ title: String, _ icon: String, _ value: String, @ViewBuilder slider: () -> S) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label(title, systemImage: icon).font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(value).font(.subheadline.monospacedDigit()).foregroundStyle(.secondary)
+            }
+            slider()
+        }
+    }
+
+    private var statusIcon: String {
+        guard let t = player.current else { return "info.circle" }
+        return library.pending[t.id] != nil ? "arrow.triangle.2.circlepath" : "checkmark.circle"
+    }
+
     private var status: String {
         guard let t = player.current else { return "" }
         if library.pending[t.id] != nil {
-            return library.pcOnline ? "Du hörst die Änderung schon. Der PC rechnet gerade den exakten Hub-Sound." : "Du hörst die Änderung schon. Sobald der PC erreichbar ist, rechnet er den exakten Hub-Sound."
+            return library.pcOnline ? "Hörst du schon – der PC rechnet gerade den exakten Hub-Sound." : "Hörst du schon – der PC rechnet nach, sobald er an ist."
         }
-        return player.reverbPending ? "Hall kommt mit der exakten Fassung vom PC." : "Gilt für diesen Song – auch am PC im Hub und fürs Edit."
+        return player.reverbPending ? "Hall kommt mit der exakten Fassung vom PC." : "Gilt für diesen Song – auch am PC und fürs Edit."
     }
 
     private func apply() {
@@ -269,36 +393,42 @@ struct LyricsGlowView: View {
         let nowMs = player.time * 1000 * player.bakedRate
         ScrollViewReader { proxy in
             ScrollView(showsIndicators: false) {
-                VStack(alignment: .leading, spacing: 18) {
+                VStack(alignment: .leading, spacing: 22) {
                     if lyrics.lines.isEmpty {
-                        Text(lyrics.loadingFor != nil ? "Lade Lyrics …" : (lyrics.plain ?? "Keine Lyrics gefunden"))
-                            .font(.title3.weight(.semibold)).foregroundStyle(.white.opacity(0.6))
-                            .padding(.top, 80)
+                        VStack(alignment: .leading, spacing: 10) {
+                            Image(systemName: lyrics.loadingFor != nil ? "ellipsis" : "text.quote").font(.title)
+                            Text(lyrics.loadingFor != nil ? "Lade Lyrics …" : (lyrics.plain ?? "Keine Lyrics für diesen Song"))
+                                .font(.title3.weight(.semibold))
+                        }
+                        .foregroundStyle(.white.opacity(0.55))
+                        .padding(.top, 120)
                     }
                     ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { i, line in
                         let dist = Double(abs(i - (idx ?? -10)))
                         let isCur = i == idx
                         lineText(line, current: isCur, nowMs: nowMs)
-                            .font(.system(size: 28, weight: .bold, design: .default))
-                            .tracking(-0.4)
+                            .font(.system(size: 30, weight: .heavy))
+                            .tracking(-0.5)
+                            .lineSpacing(2)
                             .opacity(isCur ? 1 : max(0.16, 0.5 - dist * 0.08))
                             .blur(radius: isCur ? 0 : min(dist * 0.7, 2.4))
-                            .scaleEffect(isCur ? 1.06 : 1, anchor: .leading)
-                            .shadow(color: .white.opacity(isCur ? 0.35 : 0), radius: 12)
-                            .animation(.spring(response: 0.7, dampingFraction: 0.75), value: isCur)
+                            .scaleEffect(isCur ? 1.04 : 1, anchor: .leading)
+                            .shadow(color: .white.opacity(isCur ? 0.4 : 0), radius: 14)
+                            .animation(.spring(response: 0.7, dampingFraction: 0.78), value: isCur)
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .id(i)
                             .onTapGesture { player.seek(to: line.ms / 1000 / max(player.bakedRate, 0.1)) }
                     }
                 }
-                .padding(.vertical, 160)
+                .padding(.vertical, 140)
             }
-            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.18),
-                                         .init(color: .black, location: 0.82), .init(color: .clear, location: 1)],
+            .mask(LinearGradient(stops: [.init(color: .clear, location: 0), .init(color: .black, location: 0.16),
+                                         .init(color: .black, location: 0.8), .init(color: .clear, location: 1)],
                                  startPoint: .top, endPoint: .bottom))
             .onChange(of: idx) { _, n in
-                if let n { withAnimation(.spring(response: 0.6, dampingFraction: 0.85)) { proxy.scrollTo(n, anchor: .center) } }
+                if let n { withAnimation(.spring(response: 0.65, dampingFraction: 0.86)) { proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: 0.38)) } }
             }
+            .onAppear { if let n = idx { proxy.scrollTo(n, anchor: UnitPoint(x: 0, y: 0.38)) } }
         }
     }
 
@@ -308,7 +438,7 @@ struct LyricsGlowView: View {
         var out = Text("")
         for (k, w) in words.enumerated() {
             let sung = w.ms <= nowMs
-            out = out + Text((k > 0 ? " " : "") + w.text).foregroundColor(sung ? .white : .white.opacity(0.45))
+            out = out + Text((k > 0 ? " " : "") + w.text).foregroundColor(sung ? .white : .white.opacity(0.4))
         }
         return out
     }
@@ -320,14 +450,13 @@ struct MP3PlayerView: View {
     @EnvironmentObject var player: Player
     @EnvironmentObject var lyrics: Lyrics
 
-    private let lcd = Color(red: 0.78, green: 0.84, blue: 0.80)
-    private let ink = Color(red: 0.08, green: 0.12, blue: 0.10)
+    private let lcd = Color(red: 0.76, green: 0.83, blue: 0.79)
+    private let ink = Color(red: 0.07, green: 0.11, blue: 0.09)
 
     var body: some View {
         let idx = player.lyricIndex ?? lyrics.index(at: player.time, rate: player.bakedRate)
         let lines = lyrics.lines
         VStack(spacing: 0) {
-            // Statusleiste wie bei einem MP3-Player
             HStack(spacing: 6) {
                 Image(systemName: player.isPlaying ? "play.fill" : "pause.fill")
                 Text(formatTime(player.time))
@@ -336,30 +465,29 @@ struct MP3PlayerView: View {
                 Spacer()
                 Image(systemName: "battery.75percent")
             }
-            .font(.system(size: 12, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 12).padding(.vertical, 8)
+            .font(.system(size: 11, weight: .bold, design: .monospaced))
+            .padding(.horizontal, 12).padding(.vertical, 7)
             .background(ink.opacity(0.1))
             Rectangle().fill(ink.opacity(0.6)).frame(height: 1.5)
-            // Lyrics: eine Zeile vorher, die aktuelle groß und invertiert, zwei danach
-            VStack(alignment: .leading, spacing: 14) {
+            VStack(alignment: .leading, spacing: 12) {
                 if lines.isEmpty {
-                    Text(lyrics.loadingFor != nil ? "LADE LYRICS..." : "KEINE LYRICS").font(.system(size: 18, weight: .bold, design: .monospaced))
+                    Text(lyrics.loadingFor != nil ? "LADE LYRICS..." : "KEINE LYRICS").font(.system(size: 16, weight: .bold, design: .monospaced))
                 } else {
                     let i = idx ?? -1
                     ForEach(max(0, i - 1)...min(lines.count - 1, max(i, 0) + 2), id: \.self) { k in
                         let text = lines[k].text.isEmpty ? "♪ ♪ ♪" : lines[k].text.uppercased()
                         if k == i {
                             Text(text)
-                                .font(.system(size: 20, weight: .heavy, design: .monospaced))
-                                .tracking(1.2)
+                                .font(.system(size: 18, weight: .heavy, design: .monospaced))
+                                .tracking(1.1)
                                 .foregroundStyle(lcd)
                                 .padding(.horizontal, 8).padding(.vertical, 6)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .background(ink)
                         } else {
                             Text(text)
-                                .font(.system(size: 16, weight: .bold, design: .monospaced))
-                                .tracking(1.2)
+                                .font(.system(size: 14, weight: .bold, design: .monospaced))
+                                .tracking(1.1)
                                 .opacity(k < i ? 0.35 : 0.7)
                                 .padding(.horizontal, 8)
                         }
@@ -367,26 +495,28 @@ struct MP3PlayerView: View {
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.top, 16).padding(.horizontal, 6)
+            .padding(.top, 14).padding(.horizontal, 6)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             .animation(.easeOut(duration: 0.25), value: idx)
-            // Fortschrittsbalken in Blöcken
             GeometryReader { g in
                 let n = 24
                 let done = Int((player.time / max(player.duration, 1)) * Double(n))
                 HStack(spacing: 3) {
                     ForEach(0..<n, id: \.self) { k in Rectangle().fill(ink.opacity(k < done ? 0.9 : 0.15)) }
                 }
-                .frame(width: g.size.width, height: 10)
+                .frame(width: g.size.width, height: 9)
             }
-            .frame(height: 10)
+            .frame(height: 9)
             .padding(12)
         }
         .foregroundStyle(ink)
         .background(LinearGradient(colors: [lcd, lcd.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing))
-        .aspectRatio(1, contentMode: .fit)
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
-        .overlay(RoundedRectangle(cornerRadius: 14, style: .continuous).stroke(.black.opacity(0.6), lineWidth: 6))
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(10)
+        .background(
+            RoundedRectangle(cornerRadius: 20, style: .continuous)
+                .fill(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.08)], startPoint: .top, endPoint: .bottom))
+        )
         .shadow(color: .black.opacity(0.5), radius: 24, y: 14)
     }
 }

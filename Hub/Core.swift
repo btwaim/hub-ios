@@ -100,6 +100,7 @@ struct Track: Codable, Identifiable, Hashable {
     let artist: String
     let cover: String?
     let big: String?
+    let album: String?
     let duration: Double?
     let fx: Fx?
     let key: String?
