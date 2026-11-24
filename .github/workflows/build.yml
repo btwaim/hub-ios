@@ -1,0 +1,41 @@
+name: Build iOS-App
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  ios:
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Xcode-Version
+        run: xcodebuild -version
+      - name: Projekt erzeugen
+        run: brew install xcodegen && xcodegen generate
+      - name: Bauen (ohne Signatur – AltStore signiert mit deiner Apple-ID)
+        run: |
+          set -o pipefail
+          xcodebuild -project Hub.xcodeproj -scheme Hub -configuration Release -sdk iphoneos \
+            -destination 'generic/platform=iOS' -derivedDataPath build \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO CODE_SIGN_IDENTITY="" \
+            CURRENT_PROJECT_VERSION=${{ github.run_number }} build 2>&1 | tee build.log | grep -E "error:|warning: .*deprecated|BUILD (SUCCEEDED|FAILED)" || true
+          grep -q "BUILD SUCCEEDED" build.log
+      - name: Fehler-Log hochladen
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-log
+          path: build.log
+      - name: IPA packen
+        run: |
+          mkdir -p Payload
+          cp -R build/Build/Products/Release-iphoneos/Hub.app Payload/
+          zip -qry Hub.ipa Payload
+          ls -la Hub.ipa
+      - name: Release mit IPA
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "build-${{ github.run_number }}" Hub.ipa --title "Hub ${{ github.run_number }}" --notes "Automatischer Build" --latest
