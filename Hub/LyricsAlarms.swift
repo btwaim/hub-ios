@@ -6,6 +6,7 @@ import AlarmKit
 
 @MainActor
 final class Lyrics: ObservableObject {
+    static let shared = Lyrics()
     @Published private(set) var lines: [LyricLine] = []
     @Published private(set) var plain: String?
     @Published private(set) var loadingFor: String?
@@ -54,6 +55,7 @@ struct HubAlarmData: AlarmMetadata {}
 
 @MainActor
 final class Alarms: ObservableObject {
+    static let shared = Alarms()
     @Published private(set) var days: [WakeDay] = Store.load([WakeDay].self, "wake.json") ?? []
     @Published var enabled: Bool = UserDefaults.standard.object(forKey: "alarmsOn") as? Bool ?? true {
         didSet {
@@ -74,6 +76,7 @@ final class Alarms: ObservableObject {
         if let r = try? await API.get("/api/wake", timeout: 6, as: WakeResponse.self), let d = r.days, !d.isEmpty {
             days = d
             Store.save(d, "wake.json")
+            WidgetData.writeWake(d)
         }
         await reschedule()
     }

@@ -55,6 +55,17 @@ enum API {
         return URLSession(configuration: c)
     }()
 
+    static func post<T: Decodable>(_ path: String, body: [String: Any], timeout: TimeInterval = 10, as type: T.Type) async throws -> T {
+        guard let u = Config.url(path) else { throw URLError(.badURL) }
+        var r = URLRequest(url: u)
+        r.httpMethod = "POST"
+        r.timeoutInterval = timeout
+        r.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, resp) = try await session.data(for: r)
+        guard (resp as? HTTPURLResponse)?.statusCode == 200 else { throw URLError(.badServerResponse) }
+        return try JSONDecoder().decode(T.self, from: data)
+    }
+
     static func get<T: Decodable>(_ path: String, _ query: [String: String] = [:], timeout: TimeInterval = 6, as type: T.Type) async throws -> T {
         guard let u = Config.url(path, query) else { throw URLError(.badURL) }
         var r = URLRequest(url: u)
@@ -87,6 +98,7 @@ struct Track: Codable, Identifiable, Hashable {
     let title: String
     let artist: String
     let cover: String?
+    let big: String?
     let duration: Double?
     let fx: Fx?
     let key: String?
@@ -131,11 +143,10 @@ struct WakeResponse: Codable {
     let error: String?
 }
 
-struct LyricLine: Codable, Hashable {
+struct LyricWord: Codable, Hashable {
     let ms: Double
     let text: String
 
-    init(ms: Double, text: String) { self.ms = ms; self.text = text }
     init(from decoder: Decoder) throws {
         var c = try decoder.unkeyedContainer()
         ms = try c.decode(Double.self)
@@ -145,6 +156,25 @@ struct LyricLine: Codable, Hashable {
         var c = encoder.unkeyedContainer()
         try c.encode(ms)
         try c.encode(text)
+    }
+}
+
+struct LyricLine: Codable, Hashable {
+    let ms: Double
+    let text: String
+    let words: [LyricWord]?
+
+    init(from decoder: Decoder) throws {
+        var c = try decoder.unkeyedContainer()
+        ms = try c.decode(Double.self)
+        text = (try? c.decode(String.self)) ?? ""
+        words = c.isAtEnd ? nil : (try? c.decode([LyricWord].self))
+    }
+    func encode(to encoder: Encoder) throws {
+        var c = encoder.unkeyedContainer()
+        try c.encode(ms)
+        try c.encode(text)
+        if let words { try c.encode(words) }
     }
 }
 

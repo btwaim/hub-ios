@@ -4,7 +4,8 @@ import SwiftUI
 
 struct RootView: View {
     @EnvironmentObject var player: Player
-    @State private var showPlayer = false
+    @EnvironmentObject var nav: Nav
+    @Namespace private var ns
 
     var body: some View {
         TabView {
@@ -13,9 +14,15 @@ struct RootView: View {
             Tab("Mehr", systemImage: "gearshape") { SettingsView() }
         }
         .tabViewBottomAccessory {
-            MiniPlayer().onTapGesture { showPlayer = true }
+            MiniPlayer()
+                .matchedTransitionSource(id: "player", in: ns)
+                .onTapGesture { nav.showPlayer = true }
         }
-        .sheet(isPresented: $showPlayer) { PlayerView() }
+        .sheet(isPresented: $nav.showPlayer) {
+            PlayerView()
+                .navigationTransition(.zoom(sourceID: "player", in: ns))
+                .presentationBackground(.black)
+        }
         .alert(player.message ?? "", isPresented: Binding(get: { player.message != nil }, set: { if !$0 { player.message = nil } })) {
             Button("OK", role: .cancel) {}
         }
@@ -145,7 +152,7 @@ struct MiniPlayer: View {
 
     var body: some View {
         HStack(spacing: 10) {
-            CoverImage(url: player.current?.cover, size: 32, corner: 6)
+            HDCover(track: player.current, corner: 6).frame(width: 32, height: 32)
             VStack(alignment: .leading, spacing: 0) {
                 Text(player.current?.title ?? "Nichts läuft").font(.subheadline.weight(.semibold)).lineLimit(1)
                 if let a = player.current?.artist { Text(a).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
@@ -158,128 +165,6 @@ struct MiniPlayer: View {
         }
         .padding(.horizontal, 14)
         .contentShape(Rectangle())
-    }
-}
-
-// MARK: - Großer Player
-
-struct PlayerView: View {
-    @EnvironmentObject var player: Player
-    @EnvironmentObject var lyrics: Lyrics
-    @State private var showLyrics = false
-    @State private var scrub: Double?
-
-    var body: some View {
-        VStack(spacing: 18) {
-            Capsule().fill(Color.secondary.opacity(0.4)).frame(width: 40, height: 5).padding(.top, 10)
-            if showLyrics {
-                LyricsView()
-            } else {
-                Spacer(minLength: 0)
-                CoverImage(url: player.current?.cover, size: nil, corner: 18)
-                    .shadow(color: .black.opacity(0.5), radius: 24, y: 12)
-                    .padding(.horizontal, 8)
-                Spacer(minLength: 0)
-            }
-            HStack(alignment: .top) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(player.current?.title ?? "Nichts läuft").font(.title2.bold()).lineLimit(1)
-                    Text(player.current?.artist ?? "").foregroundStyle(.secondary).lineLimit(1)
-                }
-                Spacer()
-                if let label = player.current?.fx?.label, !label.isEmpty {
-                    Text(label).font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 5)
-                        .background(Color.purple.opacity(0.2), in: Capsule()).foregroundStyle(.purple)
-                }
-            }
-            VStack(spacing: 4) {
-                Slider(value: Binding(get: { scrub ?? player.time }, set: { scrub = $0 }), in: 0...max(player.duration, 1)) { editing in
-                    if !editing, let s = scrub { player.seek(to: s); scrub = nil }
-                }
-                HStack {
-                    Text(formatTime(scrub ?? player.time))
-                    Spacer()
-                    Text("-" + formatTime(max(0, player.duration - (scrub ?? player.time))))
-                }
-                .font(.caption.monospacedDigit()).foregroundStyle(.secondary)
-            }
-            HStack {
-                Button { player.shuffle.toggle() } label: { Image(systemName: "shuffle").foregroundStyle(player.shuffle ? Color.purple : Color.secondary) }
-                Spacer()
-                Button { player.previous() } label: { Image(systemName: "backward.fill").font(.title) }
-                Spacer()
-                Button { player.toggle() } label: { Image(systemName: player.isPlaying ? "pause.circle.fill" : "play.circle.fill").font(.system(size: 68)) }
-                Spacer()
-                Button { player.next() } label: { Image(systemName: "forward.fill").font(.title) }
-                Spacer()
-                Button {
-                    player.repeatMode = Player.Repeat(rawValue: (player.repeatMode.rawValue + 1) % 3) ?? .off
-                } label: {
-                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                        .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.purple)
-                }
-            }
-            .buttonStyle(.plain)
-            .font(.title3)
-            HStack {
-                Button { withAnimation { showLyrics.toggle() } } label: {
-                    Image(systemName: "quote.bubble").foregroundStyle(showLyrics ? Color.purple : Color.secondary)
-                }
-                Spacer()
-                Menu {
-                    Button("Aus") { player.setSleep(.off) }
-                    Button("15 Minuten") { player.setSleep(.minutes(15)) }
-                    Button("30 Minuten") { player.setSleep(.minutes(30)) }
-                    Button("60 Minuten") { player.setSleep(.minutes(60)) }
-                    Button("Nach diesem Song") { player.setSleep(.endOfSong) }
-                } label: {
-                    HStack(spacing: 6) {
-                        Image(systemName: "moon.zzz")
-                        if let end = player.sleepEnds { Text(end, style: .timer).monospacedDigit() }
-                        else if player.sleep == .endOfSong { Text("nach dem Song") }
-                    }
-                    .foregroundStyle(player.sleep == .off ? Color.secondary : Color.purple)
-                }
-            }
-            .font(.title3)
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 24)
-        .task(id: player.current?.id) { await lyrics.load(player.current) }
-    }
-}
-
-struct LyricsView: View {
-    @EnvironmentObject var player: Player
-    @EnvironmentObject var lyrics: Lyrics
-
-    var body: some View {
-        let rate = player.current?.rate ?? 1
-        let idx = lyrics.index(at: player.time, rate: rate)
-        ScrollViewReader { proxy in
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    if lyrics.lines.isEmpty {
-                        Text(lyrics.loadingFor != nil ? "Lade Lyrics …" : (lyrics.plain ?? "Keine Lyrics gefunden"))
-                            .foregroundStyle(.secondary)
-                    }
-                    ForEach(Array(lyrics.lines.enumerated()), id: \.offset) { i, line in
-                        Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(.title3.weight(.bold))
-                            .foregroundStyle(i == idx ? Color.primary : Color.secondary.opacity(0.55))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .id(i)
-                            .onTapGesture { player.seek(to: line.ms / 1000 / max(rate, 0.1)) }
-                    }
-                }
-                .padding(.vertical, 40)
-            }
-            .onChange(of: idx) { _, n in
-                if let n { withAnimation(.easeInOut(duration: 0.35)) { proxy.scrollTo(n, anchor: .center) } }
-            }
-        }
-        .frame(maxHeight: .infinity)
     }
 }
 
