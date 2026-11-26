@@ -63,7 +63,15 @@ final class Alarms: ObservableObject {
         lightLamps = sel.isEmpty ? ["-"] : sel   // „-“ = bewusst keine Lampe
     }
 
-    @Published private(set) var days: [WakeDay] = Store.load([WakeDay].self, "wake.json") ?? []
+    /// Tage nach Stundenplan (roh, ohne deine eigenen Zeiten)
+    private var raw: [WakeDay] = Store.load([WakeDay].self, "wake.json") ?? []
+    /// Tage, wie sie geweckt werden (Stundenplan + deine eigenen Zeiten)
+    @Published private(set) var days: [WakeDay] = []
+    /// Eigene Weckzeit für einzelne Tage – wenn Untis es nicht weiß (erst zur 2., frei, …): Datum → "HH:mm" oder "aus"
+    @Published private(set) var overrides: [String: String] = Store.load([String: String].self, "wakeOverrides.json") ?? [:]
+    static let off = "aus"
+    struct Preset: Hashable { let label: String; let time: String }
+    static let presets = [Preset(label: "1. Stunde", time: "06:25"), Preset(label: "2. Stunde", time: "07:25"), Preset(label: "ab 3. Stunde", time: "08:30")]
     @Published var enabled: Bool = UserDefaults.standard.object(forKey: "alarmsOn") as? Bool ?? true {
         didSet {
             UserDefaults.standard.set(enabled, forKey: "alarmsOn")
@@ -87,6 +95,50 @@ final class Alarms: ObservableObject {
     /// Test: Bis zu diesem Zeitpunkt sagt die Prüfung immer „Licht an“
     @Published private(set) var lightTestUntil: Date? = UserDefaults.standard.object(forKey: "lightTest") as? Date
 
+    init() { recompute() }
+
+    private static func isoToday() -> String {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        return f.string(from: Date())
+    }
+    private static func period(of time: String) -> Int? { ["06:25": 1, "07:25": 2, "08:30": 3][time] }
+    private static func weekday(_ iso: String) -> String? {
+        let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "yyyy-MM-dd"
+        guard let d = f.date(from: iso) else { return nil }
+        return ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][Calendar.current.component(.weekday, from: d) - 1]
+    }
+    /// Stundenplan-Tag mit deiner eigenen Zeit (falls gesetzt)
+    static func applying(_ v: String?, to d: WakeDay) -> WakeDay {
+        guard let v else { return d }
+        if v == off { return WakeDay(date: d.date, free: true, wake: nil, label: d.label, period: nil, subject: nil) }
+        return WakeDay(date: d.date, free: false, wake: v, label: d.label, period: period(of: v), subject: nil)
+    }
+
+    /// Stundenplan + eigene Zeiten zusammenrechnen (alte eigene Zeiten fliegen raus)
+    private func recompute() {
+        let today = Self.isoToday()
+        if overrides.keys.contains(where: { $0 < today }) {
+            overrides = overrides.filter { $0.key >= today }
+            Store.save(overrides, "wakeOverrides.json")
+        }
+        var out = raw.map { Self.applying(overrides[$0.date], to: $0) }
+        // eigene Zeit an einem Tag, den der Stundenplan (noch) nicht kennt
+        for (date, v) in overrides where v != Self.off && !raw.contains(where: { $0.date == date }) {
+            out.append(WakeDay(date: date, free: false, wake: v, label: Self.weekday(date), period: Self.period(of: v), subject: nil))
+        }
+        days = out.sorted { $0.date < $1.date }
+        WidgetData.writeWake(days)
+    }
+
+    /// Eigene Weckzeit setzen (nil = wieder nach Stundenplan) – stellt die Wecker sofort neu und sagt es dem PC
+    func setOverride(_ date: String, _ value: String?) {
+        if let value { overrides[date] = value } else { overrides.removeValue(forKey: date) }
+        Store.save(overrides, "wakeOverrides.json")
+        recompute()
+        HubStore.shared.act(["type": "wake-override", "date": date, "value": value ?? ""])
+        Task { await reschedule() }
+    }
+
     private var storedIDs: [String] {
         get { UserDefaults.standard.stringArray(forKey: "alarmIDs") ?? [] }
         set { UserDefaults.standard.set(newValue, forKey: "alarmIDs") }
@@ -105,7 +157,7 @@ final class Alarms: ObservableObject {
     }
 
     /// nur Vorführmodus
-    func demo(_ d: [WakeDay]) { days = d }
+    func demo(_ d: [WakeDay]) { raw = d; recompute() }
 
     /// Nach Kurzbefehl / Hintergrund-Abruf: Tage aus dem eigenen Stundenplan übernehmen
     func refreshFromSchool() async {
@@ -115,10 +167,10 @@ final class Alarms: ObservableObject {
     }
 
     private func apply(_ d: [WakeDay], from: String) {
-        days = d
+        raw = d
         source = from
         Store.save(d, "wake.json")
-        WidgetData.writeWake(d)
+        recompute()
     }
 
     /// nächster Wecker (Zeit + Tag)
@@ -167,7 +219,8 @@ final class Alarms: ObservableObject {
         for day in days {
             guard let when = day.wakeDate, when.addingTimeInterval(gentle && lead ? -Alarms.leadSeconds : 0) > Date() else { continue }
             let id = UUID()
-            let title = day.period.map { "Guten Morgen · \($0). Stunde\(day.subject.map { " \($0)" } ?? "")" } ?? "Guten Morgen"
+            let title = overrides[day.date] != nil ? "Guten Morgen · deine Weckzeit"
+                      : day.period.map { "Guten Morgen · \($0). Stunde\(day.subject.map { " \($0)" } ?? "")" } ?? "Guten Morgen"
             do {
                 _ = try await manager.schedule(id: id, configuration: config(when, title: title))
                 ids.append(id.uuidString)

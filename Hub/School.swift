@@ -281,7 +281,7 @@ final class School: ObservableObject {
             UserDefaults.standard.set([s, e], forKey: "untisRange")
             UserDefaults.standard.set(lastFetch, forKey: "untisFetched")
             UserDefaults.standard.set(r.person, forKey: "untisPerson")
-            WidgetData.writeWake(wakeDays())
+            WidgetData.writeWake(wakeDays().map { Alarms.applying(Alarms.shared.overrides[$0.date], to: $0) })
             return true
         } catch {
             lastError = error.localizedDescription
@@ -345,7 +345,10 @@ final class School: ObservableObject {
         let fresh = await refresh()
         let day = targetDay()
         var value = "", note: String
-        if let p = plan(for: day) {
+        if let own = Alarms.shared.overrides[day] {
+            value = own == Alarms.off ? "" : own
+            note = own == Alarms.off ? "\(dayTitle(day)): von dir auf „kein Wecker“ gestellt" : "\(dayTitle(day)): deine eigene Weckzeit \(own)"
+        } else if let p = plan(for: day) {
             if p.free { note = "\(dayTitle(day)): keine Schule" }
             else {
                 value = p.wake ?? ""

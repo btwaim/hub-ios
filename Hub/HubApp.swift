@@ -7,7 +7,7 @@ final class Nav: ObservableObject {
     @Published var showPlayer = false
     @Published var showAlarms = false
     @Published var showMap = false
-    @Published var tab = 0
+    @Published var tab = 1          // Musik ist die Hauptsache: App startet dort
 }
 
 @main

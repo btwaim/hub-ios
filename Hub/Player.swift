@@ -25,6 +25,11 @@ final class Player: ObservableObject {
     @Published var shuffle: Bool = UserDefaults.standard.bool(forKey: "shuffle") {
         didSet { UserDefaults.standard.set(shuffle, forKey: "shuffle"); rebuildOrder(keep: current) }
     }
+    /// Zufall nur aus deinen Main-Songs (deine Rotation am PC) statt aus allen
+    @Published var shuffleMain: Bool = UserDefaults.standard.bool(forKey: "shuffleMain") {
+        didSet { UserDefaults.standard.set(shuffleMain, forKey: "shuffleMain"); rebuildOrder(keep: current) }
+    }
+    var mainCount: Int { tracks.filter { $0.main == true }.count }
     @Published var repeatMode: Repeat = Repeat(rawValue: UserDefaults.standard.integer(forKey: "repeat")) ?? .all {
         didSet { UserDefaults.standard.set(repeatMode.rawValue, forKey: "repeat") }
     }
@@ -112,7 +117,29 @@ final class Player: ObservableObject {
     }
 
     private var tracks: [Track] { library?.tracks ?? [] }
+    /// Songs, aus denen gerade gespielt wird: bei „Main mischen“ nur die Rotation
+    private var pool: [Track] {
+        guard shuffle, shuffleMain else { return tracks }
+        let m = tracks.filter { $0.main == true }
+        return m.isEmpty ? tracks : m
+    }
 
+    /// „Main mischen“ / „Alle mischen“: Zufall an und sofort einen (möglichst offline gespeicherten) Song starten
+    func shufflePlay(main: Bool) {
+        shuffleMain = main
+        shuffle = true
+        let p = pool, offline = p.filter { library?.isOffline($0) == true }
+        if let t = (offline.isEmpty || library?.pcOnline == true ? p : offline).randomElement() {
+            rebuildOrder(keep: t)
+            play(t)
+        }
+    }
+    /// Zufall-Knopf im Player: aus → alle → Main → aus
+    func cycleShuffle() {
+        if !shuffle { shuffleMain = false; shuffle = true }
+        else if !shuffleMain && mainCount > 0 { shuffleMain = true }
+        else { shuffle = false; shuffleMain = false }
+    }
     // MARK: Steuerung
 
     func play(_ t: Track, at start: Double = 0) {
@@ -248,7 +275,7 @@ final class Player: ObservableObject {
     }
 
     private func rebuildOrder(keep: Track?) {
-        var ids = tracks.map(\.id)
+        var ids = pool.map(\.id)
         if shuffle {
             ids.shuffle()
             if let k = keep?.id, let i = ids.firstIndex(of: k) { ids.remove(at: i); ids.insert(k, at: 0) }
@@ -258,7 +285,7 @@ final class Player: ObservableObject {
 
     private func step(_ dir: Int) {
         guard !tracks.isEmpty else { return }
-        if order.count != tracks.count { rebuildOrder(keep: current) }
+        if order.count != pool.count || !Set(order).isSuperset(of: pool.map(\.id)) { rebuildOrder(keep: current) }
         let i = current.flatMap { c in order.firstIndex(of: c.id) } ?? -1
         for k in 1...order.count {
             let j = ((i + dir * k) % order.count + order.count) % order.count

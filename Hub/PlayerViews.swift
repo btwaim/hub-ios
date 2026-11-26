@@ -231,12 +231,20 @@ struct PlayerView: View {
 
     private var controls: some View {
         HStack {
-            Button { player.shuffle.toggle() } label: {
+            Button { withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) { player.cycleShuffle() } } label: {
                 Image(systemName: "shuffle").font(.system(size: 17, weight: .semibold))
                     .foregroundStyle(player.shuffle ? Color.white : .white.opacity(0.45))
                     .frame(width: 36, height: 36)
                     .background(Color.white.opacity(player.shuffle ? 0.2 : 0), in: Circle())
+                    .overlay(alignment: .topTrailing) {
+                        if player.shuffle && player.shuffleMain {
+                            Text("M").font(.system(size: 9, weight: .black)).foregroundStyle(.black)
+                                .frame(width: 14, height: 14).background(Color.purple.mix(with: .white, by: 0.3), in: Circle())
+                                .offset(x: 3, y: -3).transition(.scale.combined(with: .opacity))
+                        }
+                    }
             }
+            .accessibilityLabel(player.shuffle ? (player.shuffleMain ? "Zufall: nur Main" : "Zufall: alle") : "Zufall aus")
             Spacer()
             Button { player.previous() } label: { Image(systemName: "backward.fill").font(.system(size: 30)) }
             Spacer()

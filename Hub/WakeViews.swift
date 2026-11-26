@@ -13,14 +13,13 @@ struct AlarmView: View {
     @State private var guideOpen = false
     @State private var checking = false
     @State private var checkResult: String?
+    @State private var customDay: WakeDay?
+    @State private var customTime = Date()
 
-    private var next: (plan: WakePlan, at: Date)? {
-        guard school.connected else { return nil }
-        for k in 0..<8 {
-            let iso = isoDay(Date().addingTimeInterval(Double(k) * 86400))
-            if let p = school.plan(for: iso), let at = p.wakeDate, at > Date() { return (p, at) }
-        }
-        return nil
+    /// nächster Wecker mit deinen eigenen Zeiten; Schlafenszeiten nur, wenn er aus dem Stundenplan kommt
+    private var next: (day: WakeDay, at: Date, plan: WakePlan?)? {
+        guard let n = alarms.next else { return nil }
+        return (n.day, n.at, alarms.overrides[n.day.date] == nil ? school.plan(for: n.day.date) : nil)
     }
 
     var body: some View {
@@ -114,9 +113,11 @@ struct AlarmView: View {
                     Text("Hub schaltet deine WiZ-Lampe selbst: \(alarms.lightLead) Min vor dem Wecker „Aufwachen“ an (dimmt ca. 30 Min langsam von dunkel-lila bis hell), \(alarms.lightOff) Min nach dem Wecker wieder aus. Dafür braucht es Automationen um \(alarms.lightAutomationTimes.joined(separator: ", ")) und \(alarms.lightOffTimes.joined(separator: ", ")) – jeweils nur die Aktion „Aufstehlicht“ von Hub.")
                 }
 
-                Section("Nächste Tage") {
+                Section {
                     ForEach(alarms.days) { d in dayRow(d) }
                     if alarms.days.isEmpty { Text("Noch keine Daten – WebUntis verbinden oder Hub am PC öffnen.").font(.footnote).foregroundStyle(.secondary) }
+                } header: { Text("Nächste Tage") } footer: {
+                    Text("Tippe auf einen Tag, wenn Untis es nicht weiß – z. B. erst zur 2. Stunde oder frei. Dann klingelt es zu deiner Zeit oder gar nicht. Das Aufstehlicht schaltet nur zu den drei normalen Zeiten.")
                 }
             }
             .navigationTitle("Wecker")
@@ -125,7 +126,28 @@ struct AlarmView: View {
             .refreshable { await alarms.refresh() }
             .sheet(isPresented: $connectOpen) { UntisConnectSheet() }
             .sheet(isPresented: $guideOpen) { ShortcutGuide() }
+            .sheet(item: $customDay) { d in customSheet(d) }
         }
+    }
+
+    /// eigene Uhrzeit für einen Tag
+    private func customSheet(_ d: WakeDay) -> some View {
+        NavigationStack {
+            VStack(spacing: 16) {
+                Text(dayTitle(d.date)).font(.title2.bold())
+                DatePicker("Weckzeit", selection: $customTime, displayedComponents: .hourAndMinute)
+                    .datePickerStyle(.wheel).labelsHidden()
+                Button {
+                    let f = DateFormatter(); f.locale = Locale(identifier: "en_US_POSIX"); f.dateFormat = "HH:mm"
+                    alarms.setOverride(d.date, f.string(from: customTime))
+                    customDay = nil
+                } label: { Label("Wecker stellen", systemImage: "alarm.fill").frame(maxWidth: .infinity) }
+                .buttonStyle(.borderedProminent).tint(.orange).controlSize(.large)
+            }
+            .padding(24)
+            .toolbar { ToolbarItem(placement: .topBarTrailing) { Button("Abbrechen") { customDay = nil } } }
+        }
+        .presentationDetents([.medium])
     }
 
     private var fetchedText: String {
@@ -138,7 +160,7 @@ struct AlarmView: View {
         return VStack(alignment: .leading, spacing: 8) {
             HStack {
                 Image(systemName: "alarm.fill")
-                Text(n.map { dayTitle($0.plan.date) } ?? "Nächster Wecker").textCase(.uppercase)
+                Text(n.map { dayTitle($0.day.date) } ?? "Nächster Wecker").textCase(.uppercase)
                 Spacer()
                 Text(alarms.enabled ? "AN" : "AUS").font(.caption2.weight(.heavy))
                     .padding(.horizontal, 8).padding(.vertical, 3).background(.white.opacity(0.2), in: Capsule())
@@ -149,9 +171,10 @@ struct AlarmView: View {
                 Text(n.at, format: .dateTime.hour().minute())
                     .font(.system(size: 64, weight: .heavy, design: .rounded))
                     .shadow(color: .black.opacity(0.25), radius: 10)
-                Text([n.plan.period.map { "\($0). Stunde" }, n.plan.subject].compactMap { $0 }.joined(separator: " · "))
+                Text(alarms.overrides[n.day.date] != nil ? "Deine eigene Weckzeit"
+                     : [n.day.period.map { "\($0). Stunde" }, n.day.subject].compactMap { $0 }.joined(separator: " · "))
                     .font(.headline)
-                if let off = n.plan.off, let latest = n.plan.latest {
+                if let off = n.plan?.off, let latest = n.plan?.latest {
                     Label("Offline \(off) · spätestens \(latest) schlafen", systemImage: "moon.stars.fill").font(.subheadline).foregroundStyle(.white.opacity(0.85))
                 }
             } else {
@@ -186,19 +209,51 @@ struct AlarmView: View {
     }
 
     private func dayRow(_ d: WakeDay) -> some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text(dayTitle(d.date)).font(.body.weight(.semibold))
-                Text(d.free ? "frei · ausschlafen" : [d.period.map { "\($0). Stunde" }, d.subject].compactMap { $0 }.joined(separator: " · "))
-                    .font(.caption).foregroundStyle(.secondary)
+        let own = alarms.overrides[d.date]
+        return Menu {
+            Button { alarms.setOverride(d.date, nil) } label: {
+                Label("Automatisch (Untis)", systemImage: own == nil ? "checkmark" : "calendar")
             }
-            Spacer()
-            if d.free { Image(systemName: "bed.double.fill").foregroundStyle(.secondary) }
-            else {
-                Text(d.wake ?? "").font(.title3.monospacedDigit().weight(.bold))
-                    .foregroundStyle(d.period == 1 ? Color.primary : Color.green)
+            Section("Erst später") {
+                ForEach(Alarms.presets, id: \.time) { p in
+                    Button { alarms.setOverride(d.date, p.time) } label: {
+                        Label("\(p.label) · \(p.time)", systemImage: own == p.time ? "checkmark" : "clock")
+                    }
+                }
+                Button {
+                    customTime = d.wakeDate ?? Calendar.current.date(bySettingHour: 7, minute: 0, second: 0, of: Date()) ?? Date()
+                    customDay = d
+                } label: { Label("Eigene Uhrzeit …", systemImage: "slider.horizontal.3") }
             }
+            Button(role: .destructive) { alarms.setOverride(d.date, Alarms.off) } label: {
+                Label("Kein Wecker (frei)", systemImage: own == Alarms.off ? "checkmark" : "bed.double.fill")
+            }
+        } label: {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 6) {
+                        Text(dayTitle(d.date)).font(.body.weight(.semibold))
+                        if own != nil {
+                            Text("EIGENE").font(.caption2.weight(.heavy)).foregroundStyle(.orange)
+                                .padding(.horizontal, 6).padding(.vertical, 2).background(Color.orange.opacity(0.15), in: Capsule())
+                        }
+                    }
+                    Text(own == Alarms.off ? "kein Wecker · von dir" : d.free ? "frei · ausschlafen"
+                         : own != nil ? (d.period.map { "wie \($0). Stunde" } ?? "deine Zeit")
+                         : [d.period.map { "\($0). Stunde" }, d.subject].compactMap { $0 }.joined(separator: " · "))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if d.free { Image(systemName: "bed.double.fill").foregroundStyle(.secondary) }
+                else {
+                    Text(d.wake ?? "").font(.title3.monospacedDigit().weight(.bold))
+                        .foregroundStyle(own != nil ? Color.orange : d.period == 1 ? Color.primary : Color.green)
+                }
+                Image(systemName: "chevron.up.chevron.down").font(.caption2).foregroundStyle(.tertiary)
+            }
+            .contentShape(Rectangle())
         }
+        .buttonStyle(.plain)
     }
 
     private func isoDay(_ d: Date) -> String {

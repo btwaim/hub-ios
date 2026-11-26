@@ -9,8 +9,8 @@ struct RootView: View {
 
     var body: some View {
         TabView(selection: $nav.tab) {
-            Tab("Start", systemImage: "house.fill", value: 0) { HomeView() }
             Tab("Musik", systemImage: "music.note", value: 1) { MusicView() }
+            Tab("Start", systemImage: "house.fill", value: 0) { HomeView() }
             Tab("Kalender", systemImage: "calendar", value: 2) { CalendarView() }
             Tab("Watchlist", systemImage: "play.tv.fill", value: 3) { WatchlistView() }
             Tab("Gaming", systemImage: "gamecontroller.fill", value: 4) { GamingView() }
@@ -147,24 +147,39 @@ struct MusicView: View {
                 }
                 Spacer(minLength: 0)
             }
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
+                // Hauptknopf: deine Main-Songs (Rotation am PC) gemischt
+                Button { player.shufflePlay(main: true) } label: {
+                    VStack(spacing: 1) {
+                        Label("Main mischen", systemImage: "shuffle").font(.headline)
+                        Text("\(player.mainCount) Songs").font(.caption2).opacity(0.75)
+                    }
+                    .frame(maxWidth: .infinity).frame(height: 54)
+                }
+                .glassEffect(.regular.tint(.purple.opacity(0.6)).interactive(), in: .rect(cornerRadius: 16))
+                .disabled(player.mainCount == 0)
+                Button { player.shufflePlay(main: false) } label: {
+                    VStack(spacing: 1) {
+                        Label("Alle mischen", systemImage: "shuffle").font(.headline)
+                        Text("\(library.tracks.count) Songs").font(.caption2).opacity(0.75)
+                    }
+                    .frame(maxWidth: .infinity).frame(height: 54)
+                }
+                .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
                 Button {
                     player.shuffle = false
                     if let f = library.tracks.first(where: { library.isOffline($0) }) ?? library.tracks.first { player.play(f) }
                 } label: {
-                    Label("Abspielen", systemImage: "play.fill").font(.headline).frame(maxWidth: .infinity).frame(height: 48)
-                }
-                .glassEffect(.regular.tint(.purple.opacity(0.55)).interactive(), in: .rect(cornerRadius: 16))
-                Button {
-                    player.shuffle = true
-                    let pool = library.tracks.filter { library.isOffline($0) }
-                    if let f = (pool.isEmpty ? library.tracks : pool).randomElement() { player.play(f) }
-                } label: {
-                    Label("Zufall", systemImage: "shuffle").font(.headline).frame(maxWidth: .infinity).frame(height: 48)
+                    Image(systemName: "play.fill").font(.headline).frame(width: 54, height: 54)
                 }
                 .glassEffect(.regular.interactive(), in: .rect(cornerRadius: 16))
+                .accessibilityLabel("Der Reihe nach abspielen")
             }
             .buttonStyle(.plain)
+            if player.mainCount == 0 && !library.tracks.isEmpty {
+                Text("Main = deine Rotation. Am PC im Hub bei einem Song auf die Fahne tippen („Ab hier ist meine Rotation“).")
+                    .font(.caption).foregroundStyle(.secondary).frame(maxWidth: .infinity, alignment: .leading)
+            }
         }
         .padding(16)
     }

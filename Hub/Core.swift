@@ -104,6 +104,8 @@ struct Track: Codable, Identifiable, Hashable {
     let duration: Double?
     let fx: Fx?
     let key: String?
+    /// gehört zu deinen Main-Songs (deiner Rotation am PC)
+    var main: Bool? = nil
 
     var rate: Double { fx?.rate ?? 1 }
     /// Dateiname im Offline-Speicher; ändert sich, wenn im Hub Bass/Tempo/Hall geändert wird
