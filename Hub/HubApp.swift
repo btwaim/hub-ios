@@ -7,6 +7,7 @@ final class Nav: ObservableObject {
     @Published var showPlayer = false
     @Published var showAlarms = false
     @Published var showMap = false
+    @Published var showGame = false
     @Published var tab = 1          // Musik ist die Hauptsache: App startet dort
 }
 
@@ -47,6 +48,7 @@ struct HubApp: App {
             .preferredColorScheme(.dark)
             .onOpenURL { url in
                 if url.scheme == "hubapp", url.host == "player" { nav.showPlayer = true; return }
+                if url.scheme == "hubapp", url.host == "game" { nav.showGame = true; return }
                 if url.scheme == "hubapp", url.host == "watch" { nav.tab = 3; return }
                 if url.scheme == "hubapp", url.host == "wake" { nav.tab = 0; nav.showAlarms = true; return }
                 if Config.apply(link: url) { setUp = true; Task { await start() } }

@@ -21,6 +21,7 @@ struct RootView: View {
                 .matchedTransitionSource(id: "player", in: ns)
                 .onTapGesture { nav.showPlayer = true }
         }
+        .fullScreenCover(isPresented: $nav.showGame) { GameScreen().environmentObject(nav) }
         .sheet(isPresented: $nav.showPlayer) {
             PlayerView()
                 .navigationTransition(.zoom(sourceID: "player", in: ns))
@@ -131,6 +132,7 @@ struct MusicView: View {
 
     private var header: some View {
         VStack(spacing: 14) {
+            GameBanner()
             HStack(spacing: 14) {
                 // Mosaik aus den ersten vier Covern
                 let firsts = Array(library.tracks.prefix(4))
@@ -151,8 +153,8 @@ struct MusicView: View {
                 // Hauptknopf: deine Main-Songs (Rotation am PC) gemischt
                 Button { player.shufflePlay(main: true) } label: {
                     VStack(spacing: 1) {
-                        Label("Main mischen", systemImage: "shuffle").font(.headline)
-                        Text("\(player.mainCount) Songs").font(.caption2).opacity(0.75)
+                        Label("Main", systemImage: "shuffle").font(.headline)
+                        Text("\(player.mainCount) Songs mischen").font(.caption2).opacity(0.75)
                     }
                     .frame(maxWidth: .infinity).frame(height: 54)
                 }
@@ -160,8 +162,8 @@ struct MusicView: View {
                 .disabled(player.mainCount == 0)
                 Button { player.shufflePlay(main: false) } label: {
                     VStack(spacing: 1) {
-                        Label("Alle mischen", systemImage: "shuffle").font(.headline)
-                        Text("\(library.tracks.count) Songs").font(.caption2).opacity(0.75)
+                        Label("Alle", systemImage: "shuffle").font(.headline)
+                        Text("\(library.tracks.count) Songs mischen").font(.caption2).opacity(0.75)
                     }
                     .frame(maxWidth: .infinity).frame(height: 54)
                 }

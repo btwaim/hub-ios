@@ -27,6 +27,12 @@ for s in home music player lyrics mp3 alarms map gaming; do
   sleep 14
   xcrun simctl io "$DEV" screenshot "screens/$s.png"
 done
+# Ashen Oath (Spiel im Vorführmodus): kurz nach dem Start und mitten im Kampf
+xcrun simctl launch --terminate-running-process "$DEV" app.hubmusic.hub -demoScreen game
+sleep 16
+xcrun simctl io "$DEV" screenshot screens/game.png
+sleep 25
+xcrun simctl io "$DEV" screenshot screens/game2.png
 # Dynamic Island: Song „läuft“, dann App verlassen → Insel zeigt die Live-Aktivität
 xcrun simctl launch --terminate-running-process "$DEV" app.hubmusic.hub -demoScreen player
 sleep 12

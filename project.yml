@@ -23,6 +23,9 @@ targets:
     sources:
       - path: Hub
       - path: Shared
+      - path: Game
+        type: folder
+        buildPhase: resources
     dependencies:
       - target: HubWidgets
         embed: true

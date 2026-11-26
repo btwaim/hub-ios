@@ -16,7 +16,7 @@ enum Demo {
         let base = "https://i.scdn.co/image/"
         func track(_ id: String, _ title: String, _ artist: String, _ img: String, _ fx: Fx?) -> Track {
             Track(id: id, uri: nil, title: title, artist: artist, cover: base + "ab67616d00004851" + img, big: base + "ab67616d0000b273" + img,
-                  album: nil, duration: 212_307, fx: fx, key: nil)
+                  album: nil, duration: 212_307, fx: fx, key: nil, main: id != "demo2")
         }
         let tracks = [
             track("demo1", "Insomniac", "Memo Boy, Chakra Efendi", "fd062989b0b63b82f5949524", Fx(rate: 1.1, bass: 25, reverb: false)),
@@ -39,9 +39,10 @@ enum Demo {
         switch screen {
         case "music": nav.tab = 1
         case "player", "lyrics", "mp3": nav.showPlayer = true
-        case "alarms": nav.showAlarms = true
+        case "alarms": nav.tab = 0; nav.showAlarms = true
         case "map": nav.showMap = true
         case "gaming": nav.tab = 4
+        case "game": nav.showGame = true
         default: nav.tab = 0
         }
     }

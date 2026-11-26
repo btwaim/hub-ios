@@ -706,6 +706,7 @@ struct GamingView: View {
         NavigationStack {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    GameBanner()
                     if let g = hub.data?.activeGame {
                         ActiveGameCard(game: g)
                         if !g.bosses.isEmpty { bosses(g) }
