@@ -16,6 +16,8 @@ final class Player: ObservableObject {
         didSet { if oldValue != isPlaying { playStateChanged() } }
     }
     @Published private(set) var time: Double = 0
+    /// genaue Abspielzeit für Wort-Animationen (time kommt nur alle 0,25 s)
+    var now: Double { guard isPlaying else { return time }; let t = player.currentTime().seconds; return t.isFinite ? t : time }
     @Published private(set) var duration: Double = 0
     /// Tempo, das schon in der gespielten Datei steckt (für die Lyrics-Zeit)
     @Published private(set) var bakedRate: Double = 1

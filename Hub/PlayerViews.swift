@@ -154,7 +154,7 @@ struct PlayerView: View {
                     case .mp3:
                         compactHeader.padding(.top, 14)
                         Spacer(minLength: 8)
-                        MP3PlayerView().frame(width: side + 24, height: side + 24)
+                        LCDLyricsView()
                         Spacer(minLength: 8)
                     }
                     ScrubBar(time: player.time, duration: player.duration) { player.seek(to: $0) }
@@ -468,79 +468,132 @@ struct LyricsGlowView: View {
     }
 }
 
-// MARK: - MP3-Player-Modus (quadratisch, LCD-Look)
+// MARK: - MP3-Lyrics-Modus: nur das iPod-Display aus dem Video
+// Hellblau-weiß leuchtendes LCD, schlichte schwarze Schrift. Die Wörter einer Zeile erscheinen einzeln, wenn sie gesungen
+// werden, über die Zeilen verteilt (Blocksatz); nach jeder Zeile wird der Bildschirm leer. Gleiche Regeln wie am PC (src/lcd.js).
 
-struct MP3PlayerView: View {
+struct LCDLyricsView: View {
     @EnvironmentObject var player: Player
     @EnvironmentObject var lyrics: Lyrics
 
-    private let lcd = Color(red: 0.76, green: 0.83, blue: 0.79)
-    private let ink = Color(red: 0.07, green: 0.11, blue: 0.09)
-
     var body: some View {
-        let idx = player.lyricIndex ?? lyrics.index(at: player.time, rate: player.bakedRate)
-        let lines = lyrics.lines
-        VStack(spacing: 0) {
-            HStack(spacing: 6) {
-                Image(systemName: player.isPlaying ? "play.fill" : "pause.fill")
-                Text(formatTime(player.time))
-                Spacer()
-                Text(player.current?.title.uppercased() ?? "HUB").lineLimit(1)
-                Spacer()
-                Image(systemName: "battery.75percent")
-            }
-            .font(.system(size: 11, weight: .bold, design: .monospaced))
-            .padding(.horizontal, 12).padding(.vertical, 7)
-            .background(ink.opacity(0.1))
-            Rectangle().fill(ink.opacity(0.6)).frame(height: 1.5)
-            VStack(alignment: .leading, spacing: 12) {
-                if lines.isEmpty {
-                    Text(lyrics.loadingFor != nil ? "LADE LYRICS..." : "KEINE LYRICS").font(.system(size: 16, weight: .bold, design: .monospaced))
-                } else {
-                    let i = idx ?? -1
-                    ForEach(max(0, i - 1)...min(lines.count - 1, max(i, 0) + 2), id: \.self) { k in
-                        let text = lines[k].text.isEmpty ? "♪ ♪ ♪" : lines[k].text.uppercased()
-                        if k == i {
-                            Text(text)
-                                .font(.system(size: 18, weight: .heavy, design: .monospaced))
-                                .tracking(1.1)
-                                .foregroundStyle(lcd)
-                                .padding(.horizontal, 8).padding(.vertical, 6)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .background(ink)
-                        } else {
-                            Text(text)
-                                .font(.system(size: 14, weight: .bold, design: .monospaced))
-                                .tracking(1.1)
-                                .opacity(k < i ? 0.35 : 0.7)
-                                .padding(.horizontal, 8)
-                        }
-                    }
-                }
-                Spacer(minLength: 0)
-            }
-            .padding(.top, 14).padding(.horizontal, 6)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            .animation(.easeOut(duration: 0.25), value: idx)
-            GeometryReader { g in
-                let n = 24
-                let done = Int((player.time / max(player.duration, 1)) * Double(n))
-                HStack(spacing: 3) {
-                    ForEach(0..<n, id: \.self) { k in Rectangle().fill(ink.opacity(k < done ? 0.9 : 0.15)) }
-                }
-                .frame(width: g.size.width, height: 9)
-            }
-            .frame(height: 9)
-            .padding(12)
+        TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !player.isPlaying)) { _ in
+            let ms = player.now * 1000 * player.bakedRate
+            let state: LCD.State = lyrics.lines.isEmpty
+                ? .text((lyrics.loadingFor != nil ? "…" : (player.current?.title ?? "hub")).lowercased().split(separator: " ").map(String.init))
+                : LCD.state(lyrics.lines, ms)
+            Canvas { ctx, size in LCD.draw(&ctx, size, state) }
         }
-        .foregroundStyle(ink)
-        .background(LinearGradient(colors: [lcd, lcd.opacity(0.85)], startPoint: .topLeading, endPoint: .bottomTrailing))
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .padding(10)
-        .background(
-            RoundedRectangle(cornerRadius: 20, style: .continuous)
-                .fill(LinearGradient(colors: [Color(white: 0.22), Color(white: 0.08)], startPoint: .top, endPoint: .bottom))
-        )
-        .shadow(color: .black.opacity(0.5), radius: 24, y: 14)
+        .aspectRatio(4.0 / 3.0, contentMode: .fit)
+        .shadow(color: Color(red: 0.63, green: 0.75, blue: 1).opacity(0.35), radius: 28)
+    }
+}
+
+enum LCD {
+    enum State { case blank, kao, line(words: [String], shown: Int), text([String]) }
+    static let kao = "つ_†"
+
+    private static func syllables(_ w: String) -> Int {
+        var n = 0, inV = false
+        for ch in w.lowercased() { let v = "aeiouyäöü".contains(ch); if v && !inV { n += 1 }; inV = v }
+        return max(1, n)
+    }
+    private static func gap(_ ms: Double, _ from: Double, _ next: Double?) -> State {
+        if let next, next - from > 6500, ms > from + 2500, ms < next - 1000 { return .kao }
+        return .blank
+    }
+
+    /// Was steht gerade auf dem Display?
+    static func state(_ lines: [LyricLine], _ ms: Double) -> State {
+        guard !lines.isEmpty else { return .blank }
+        var i = -1
+        for (k, l) in lines.enumerated() { if l.ms <= ms { i = k } else { break } }
+        if i < 0 { return lines[0].ms - ms > 6000 && ms > 1500 ? .kao : .blank }
+        let line = lines[i], next: Double? = i + 1 < lines.count ? lines[i + 1].ms : nil
+        var pairs: [(String, Double)] = []
+        if let w = line.words, !w.isEmpty {
+            pairs = w.map { ($0.text, $0.ms) }
+        } else {
+            let raw = line.text.split(separator: " ").map(String.init)
+            let syl = raw.map(syllables), total = Double(max(1, syl.reduce(0, +)))
+            let dur = min((next ?? line.ms + 6000) - line.ms, total * 260 + 300)
+            var acc = 0.0
+            for (k, s) in syl.enumerated() { pairs.append((raw[k], line.ms + dur * acc / total)); acc += Double(s) }
+        }
+        pairs = pairs.filter { !$0.0.trimmingCharacters(in: .whitespaces).isEmpty }
+        guard let last = pairs.last else { return gap(ms, line.ms, next) }
+        let lastEnd = last.1 + 700
+        let hold = min(next.map { $0 - 280 } ?? .infinity, lastEnd + 2200)
+        if ms > hold { return gap(ms, lastEnd, next) }
+        return .line(words: pairs.map { $0.0.lowercased() }, shown: pairs.filter { $0.1 <= ms }.count)
+    }
+
+    private static func font(_ size: CGFloat) -> UIFont { UIFont(name: "HelveticaNeue-Medium", size: size) ?? .systemFont(ofSize: size, weight: .medium) }
+    private static func width(_ s: String, _ f: UIFont) -> CGFloat { (s as NSString).size(withAttributes: [.font: f]).width }
+
+    /// Blocksatz wie im Video: Zeilen mit mehreren Wörtern gehen über die ganze Breite, ein einzelnes Wort steht links
+    private static func layout(_ words: [String], _ w: CGFloat, _ h: CGFloat) -> (CGFloat, [CGPoint]) {
+        let padX = w * 0.07, padY = h * 0.08, maxW = w - padX * 2
+        var F = (h / 6.6).rounded()
+        for _ in 0..<14 {
+            let f = font(F), space = F * 0.42
+            var rows: [[Int]] = [[]], cw: CGFloat = 0
+            for (k, wd) in words.enumerated() {
+                let ww = width(wd, f)
+                if !rows[rows.count - 1].isEmpty && cw + space + ww > maxW { rows.append([k]); cw = ww }
+                else { cw += (rows[rows.count - 1].isEmpty ? 0 : space) + ww; rows[rows.count - 1].append(k) }
+            }
+            let lh = F * 1.3
+            if (CGFloat(rows.count) * lh <= h - padY * 2 && words.allSatisfy { width($0, f) <= maxW }) || F < 12 {
+                var pos = Array(repeating: CGPoint.zero, count: words.count)
+                for (ri, r) in rows.enumerated() {
+                    let widths = r.map { width(words[$0], f) }, total = widths.reduce(0, +)
+                    let stretch = r.count > 1 && total + space * CGFloat(r.count - 1) > maxW * 0.55
+                    let g = r.count > 1 ? (maxW - total) / CGFloat(r.count - 1) : 0
+                    var x = padX
+                    for (j, k) in r.enumerated() { pos[k] = CGPoint(x: x, y: padY + CGFloat(ri) * lh + F * 0.86); x += widths[j] + (stretch ? g : space) }
+                }
+                return (F, pos)
+            }
+            F = (F * 0.9).rounded()
+        }
+        return (F, words.indices.map { CGPoint(x: padX, y: padY + F * CGFloat($0 + 1)) })
+    }
+
+    static func draw(_ ctx: inout GraphicsContext, _ size: CGSize, _ st: State) {
+        let W = size.width, H = size.height
+        ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(red: 0.03, green: 0.03, blue: 0.045)))
+        let b = min(W, H) * 0.035, rect = CGRect(x: b, y: b, width: W - 2 * b, height: H - 2 * b)
+        let screen = Path(roundedRect: rect, cornerRadius: max(2, b * 0.35))
+        var c = ctx
+        c.clip(to: screen)
+        // Hintergrundbeleuchtung: hell in der Mitte, zum Rand bläulich dunkler
+        c.fill(screen, with: .radialGradient(Gradient(colors: [Color(red: 0.957, green: 0.973, blue: 1), Color(red: 0.886, green: 0.918, blue: 0.984), Color(red: 0.725, green: 0.784, blue: 0.902)]),
+                                             center: CGPoint(x: rect.minX + rect.width * 0.48, y: rect.minY + rect.height * 0.42),
+                                             startRadius: rect.height * 0.1, endRadius: hypot(rect.width, rect.height) * 0.62))
+        // feine LCD-Zeilen
+        var scan = Path(), y = rect.minY
+        while y < rect.maxY { scan.addRect(CGRect(x: rect.minX, y: y, width: rect.width, height: 0.5)); y += 1.5 }
+        c.fill(scan, with: .color(Color(red: 0.27, green: 0.35, blue: 0.55).opacity(0.05)))
+        // Text (leicht weich wie auf einem echten LCD)
+        var t = c
+        t.addFilter(.blur(radius: 0.3))
+        let ink = Color(red: 0.07, green: 0.08, blue: 0.11)
+        func put(_ words: [String], _ n: Int, _ alpha: Double = 1) {
+            let (F, pos) = layout(words, rect.width, rect.height)
+            for k in 0..<min(n, words.count) {
+                t.draw(Text(words[k]).font(.custom("HelveticaNeue-Medium", size: F)).foregroundColor(ink.opacity(alpha)),
+                       at: CGPoint(x: rect.minX + pos[k].x, y: rect.minY + pos[k].y + F * 0.22), anchor: .bottomLeading)
+            }
+        }
+        switch st {
+        case .line(let words, let shown): put(words, shown)
+        case .text(let words): put(words, words.count, 0.85)
+        case .kao: t.draw(Text(kao).font(.system(size: rect.height / 9, weight: .medium)).foregroundColor(ink), at: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.46))
+        case .blank: break
+        }
+        // leichter Glanz auf dem Glas
+        c.fill(screen, with: .linearGradient(Gradient(colors: [.white.opacity(0.10), .clear, Color(red: 0.16, green: 0.24, blue: 0.43).opacity(0.08)]),
+                                             startPoint: CGPoint(x: 0, y: rect.minY), endPoint: CGPoint(x: 0, y: rect.maxY)))
     }
 }
