@@ -127,6 +127,7 @@ final class GameBridge: NSObject, WKScriptMessageHandlerWithReply {
         guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return (nil, "ungültig") }
         switch type {
         case "songs": return (Self.json(songs()), nil)
+        case "lyrics": return (await Lyrics.shared.json(for: body["id"] as? String ?? ""), nil)
         case "load": return ((try? String(contentsOf: saveFile, encoding: .utf8)) ?? "null", nil)
         case "sync": return (await sync(body["save"]), nil)
         case "haptic": Self.haptic(body["kind"] as? String ?? "light"); return (true, nil)

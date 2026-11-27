@@ -39,6 +39,17 @@ final class Lyrics: ObservableObject {
         if trackID == t.id { lines = r.lines ?? []; plain = r.plain }
     }
 
+    /// Ashen Oath: Lyrics als JSON fürs Spiel (Cache, sonst kurz beim PC nachfragen)
+    func json(for id: String) async -> String {
+        let f = dir.appendingPathComponent("(id).json")
+        if isFresh(id), let s = try? String(contentsOf: f, encoding: .utf8) { return s }
+        if let r = try? await API.get("/api/lyrics/(id)", timeout: 10, as: LyricsResponse.self), r.error == nil, let d = try? JSONEncoder().encode(r) {
+            try? d.write(to: f)
+            return String(data: d, encoding: .utf8) ?? "null"
+        }
+        return (try? String(contentsOf: f, encoding: .utf8)) ?? "null"
+    }
+
     /// nur Vorführmodus
     func demo(_ id: String, _ l: [LyricLine]) { trackID = id; lines = l }
 
