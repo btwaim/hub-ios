@@ -469,7 +469,8 @@ struct LyricsGlowView: View {
 }
 
 // MARK: - MP3-Lyrics-Modus: nur das iPod-Display aus dem Video
-// Wortpaare im Gesangsrhythmus: links der Auftakt, rechts das betonte Wort, dazwischen ein weißer Korridor.
+// Wortgruppen im Gesangsrhythmus (höchstens 3 Wörter pro Zeile, höchstens 3 Zeilen gleichzeitig): links der Auftakt,
+// rechts das betonte Wort, ein drittes in der Mitte, dazwischen ein weißer Korridor.
 // Gehaltene Töne oder Pausen → ein Wort allein. Jedes Wort erscheint genau bei seinem Einsatz; ist der Bildschirm voll,
 // rückt alles eine Zeile nach oben. Nach jeder Lyrics-Zeile wird es leer. Gleiche Regeln wie am PC (src/lcd.js).
 
@@ -494,7 +495,7 @@ struct LCDLyricsView: View {
 enum LCD {
     struct Word { let w: String; let s: Double; let e: Double }
     /// Zeile auf dem Display: Wortindex links/rechts; side 1 = einzeln rechts
-    struct Row { let a: Int; let b: Int?; let right: Bool }
+    struct Row { let a: Int; let b: Int?; var c: Int? = nil; let right: Bool }
     enum State { case blank, kao, line(key: Int, words: [String], rows: [Row], shown: Int), text([String]) }
     final class Anim { var key = -1; var off: Double = 0; var t = Date() }
     static let kao = "つ_†"
@@ -532,6 +533,13 @@ enum LCD {
             let a = words[i], b: Word? = i + 1 < words.count ? words[i + 1] : nil
             let held = a.e - a.s > 900
             if let b, !held, b.s - a.e <= 300, a.w.count + b.w.count <= 16, !(a.w.count >= 9 && b.w.count >= 9) {
+                // drittes Wort dazu, wenn es direkt folgt und alle drei kurz genug sind
+                if i + 2 < words.count {
+                    let c = words[i + 2]
+                    if b.e - b.s <= 900, c.s - b.e <= 300, a.w.count + b.w.count + c.w.count <= 15, max(a.w.count, b.w.count, c.w.count) <= 7 {
+                        rows.append(Row(a: i, b: i + 1, c: i + 2, right: false)); i += 3; continue
+                    }
+                }
                 rows.append(Row(a: i, b: i + 1, right: false)); i += 2; continue
             }
             let last = i == words.count - 1
@@ -587,13 +595,16 @@ enum LCD {
         }
         if !words.isEmpty {
             // Schriftgröße: ~4 Zeilen, das längste Paar braucht noch einen Korridor von 22 % der Breite
-            var F = (rect.height / 7.2).rounded()
+            var F = (rect.height / 6.4).rounded()
             var f = font(F)
-            let need = rows.map { r in r.b.map { width(words[r.a], f) + width(words[$0], f) + rect.width * 0.22 } ?? width(words[r.a], f) }.max() ?? 1
+            let need = rows.map { r -> CGFloat in
+                if let b = r.b, let c = r.c { return width(words[r.a], f) + width(words[b], f) + width(words[c], f) + rect.width * 0.16 }
+                return r.b.map { width(words[r.a], f) + width(words[$0], f) + rect.width * 0.22 } ?? width(words[r.a], f)
+            }.max() ?? 1
             let fit = min(1, (rect.width - padX * 2) / max(1, need))
             if fit < 1 { F = (F * fit).rounded(.down); f = font(F) }
-            let lh = F * 1.34, maxRows = max(1, Int((rect.height - padY * 2 + F * 0.3) / lh))
-            let curRow = shown > 0 ? (rows.firstIndex { $0.a == shown - 1 || $0.b == shown - 1 } ?? 0) : 0
+            let lh = F * 1.34, maxRows = min(3, max(1, Int((rect.height - padY * 2 + F * 0.3) / lh)))
+            let curRow = shown > 0 ? (rows.firstIndex { $0.a == shown - 1 || $0.b == shown - 1 || $0.c == shown - 1 } ?? 0) : 0
             let target = Double(max(0, curRow + 1 - maxRows)), now = Date()
             if anim.key != key { anim.key = key; anim.off = target }
             anim.off += (target - anim.off) * min(1, now.timeIntervalSince(anim.t) * 10); anim.t = now
@@ -605,7 +616,13 @@ enum LCD {
             for (ri, r) in rows.enumerated() {
                 let y = rect.minY + padY + F * 0.9 + (CGFloat(ri) - CGFloat(anim.off)) * lh
                 if y < rect.minY - F || y > rect.maxY + F { continue }
-                if let bi = r.b { put(r.a, right: false, y); put(bi, right: true, y) } else { put(r.a, right: r.right, y) }
+                if let bi = r.b, let ci = r.c {
+                    put(r.a, right: false, y); put(ci, right: true, y)
+                    if bi < shown {
+                        let le = rect.minX + padX + width(words[r.a], f), rs = rect.maxX - padX - width(words[ci], f)
+                        t.draw(Text(words[bi]).font(.custom("HelveticaNeue-Medium", size: F)).foregroundColor(ink), at: CGPoint(x: (le + rs) / 2 - width(words[bi], f) / 2, y: y + F * 0.22), anchor: .bottomLeading)
+                    }
+                } else if let bi = r.b { put(r.a, right: false, y); put(bi, right: true, y) } else { put(r.a, right: r.right, y) }
             }
         }
         c.fill(screen, with: .linearGradient(Gradient(colors: [.white.opacity(0.10), .clear, Color(red: 0.16, green: 0.24, blue: 0.43).opacity(0.08)]),
