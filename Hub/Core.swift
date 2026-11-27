@@ -106,6 +106,8 @@ struct Track: Codable, Identifiable, Hashable {
     let key: String?
     /// gehört zu deinen Main-Songs (deiner Rotation am PC)
     var main: Bool? = nil
+    /// Stand des wort-genauen Lyrics-Timings am PC
+    var ls: Double? = nil
 
     var rate: Double { fx?.rate ?? 1 }
     /// Dateiname im Offline-Speicher; ändert sich, wenn im Hub Bass/Tempo/Hall geändert wird
@@ -150,16 +152,20 @@ struct WakeResponse: Codable {
 struct LyricWord: Codable, Hashable {
     let ms: Double
     let text: String
+    /// Wort-Ende (nur beim wort-genauen Timing vom PC)
+    var end: Double? = nil
 
     init(from decoder: Decoder) throws {
         var c = try decoder.unkeyedContainer()
         ms = try c.decode(Double.self)
         text = (try? c.decode(String.self)) ?? ""
+        end = c.isAtEnd ? nil : try? c.decode(Double.self)
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.unkeyedContainer()
         try c.encode(ms)
         try c.encode(text)
+        if let end { try c.encode(end) }
     }
 }
 
@@ -187,6 +193,8 @@ struct LyricsResponse: Codable {
     let plain: String?
     let instrumental: Bool?
     let error: String?
+    /// Zeitpunkt des wort-genauen Timings am PC (neuer als im Cache → neu holen)
+    var stamp: Double? = nil
 }
 
 // MARK: - Ablage

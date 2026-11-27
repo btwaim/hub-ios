@@ -469,12 +469,14 @@ struct LyricsGlowView: View {
 }
 
 // MARK: - MP3-Lyrics-Modus: nur das iPod-Display aus dem Video
-// Hellblau-weiß leuchtendes LCD, schlichte schwarze Schrift. Die Wörter einer Zeile erscheinen einzeln, wenn sie gesungen
-// werden, über die Zeilen verteilt (Blocksatz); nach jeder Zeile wird der Bildschirm leer. Gleiche Regeln wie am PC (src/lcd.js).
+// Wortpaare im Gesangsrhythmus: links der Auftakt, rechts das betonte Wort, dazwischen ein weißer Korridor.
+// Gehaltene Töne oder Pausen → ein Wort allein. Jedes Wort erscheint genau bei seinem Einsatz; ist der Bildschirm voll,
+// rückt alles eine Zeile nach oben. Nach jeder Lyrics-Zeile wird es leer. Gleiche Regeln wie am PC (src/lcd.js).
 
 struct LCDLyricsView: View {
     @EnvironmentObject var player: Player
     @EnvironmentObject var lyrics: Lyrics
+    @State private var anim = LCD.Anim()
 
     var body: some View {
         TimelineView(.animation(minimumInterval: 1.0 / 30, paused: !player.isPlaying)) { _ in
@@ -482,7 +484,7 @@ struct LCDLyricsView: View {
             let state: LCD.State = lyrics.lines.isEmpty
                 ? .text((lyrics.loadingFor != nil ? "…" : (player.current?.title ?? "hub")).lowercased().split(separator: " ").map(String.init))
                 : LCD.state(lyrics.lines, ms)
-            Canvas { ctx, size in LCD.draw(&ctx, size, state) }
+            Canvas { ctx, size in LCD.draw(&ctx, size, state, anim) }
         }
         .aspectRatio(4.0 / 3.0, contentMode: .fit)
         .shadow(color: Color(red: 0.63, green: 0.75, blue: 1).opacity(0.35), radius: 28)
@@ -490,7 +492,11 @@ struct LCDLyricsView: View {
 }
 
 enum LCD {
-    enum State { case blank, kao, line(words: [String], shown: Int), text([String]) }
+    struct Word { let w: String; let s: Double; let e: Double }
+    /// Zeile auf dem Display: Wortindex links/rechts; side 1 = einzeln rechts
+    struct Row { let a: Int; let b: Int?; let right: Bool }
+    enum State { case blank, kao, line(key: Int, words: [String], rows: [Row], shown: Int), text([String]) }
+    final class Anim { var key = -1; var off: Double = 0; var t = Date() }
     static let kao = "つ_†"
 
     private static func syllables(_ w: String) -> Int {
@@ -502,65 +508,58 @@ enum LCD {
         if let next, next - from > 6500, ms > from + 2500, ms < next - 1000 { return .kao }
         return .blank
     }
+    private static func timedWords(_ line: LyricLine, _ next: Double?) -> [Word] {
+        if let w = line.words, !w.isEmpty {
+            return w.enumerated().filter { !$0.element.text.trimmingCharacters(in: .whitespaces).isEmpty }.map { k, x in
+                Word(w: x.text.lowercased(), s: x.ms, e: x.end ?? min(k + 1 < w.count ? w[k + 1].ms : x.ms + 600, x.ms + 900))
+            }
+        }
+        let raw = line.text.split(separator: " ").map(String.init)
+        guard !raw.isEmpty else { return [] }
+        let syl = raw.map(syllables), total = Double(syl.reduce(0, +))
+        let dur = min((next ?? line.ms + 6000) - line.ms, total * 260 + 300)
+        var acc = 0.0, out: [Word] = []
+        for (k, s) in syl.enumerated() {
+            let st = line.ms + dur * acc / total; acc += Double(s)
+            out.append(Word(w: raw[k].lowercased(), s: st, e: line.ms + dur * acc / total))
+        }
+        return out
+    }
+    /// Wortpaare im Rhythmus: zwei Wörter, die direkt aufeinander folgen (keine Pause, kein gehaltener Ton, nicht beide lang)
+    static func pairRows(_ words: [Word]) -> [Row] {
+        var rows: [Row] = [], i = 0
+        while i < words.count {
+            let a = words[i], b: Word? = i + 1 < words.count ? words[i + 1] : nil
+            let held = a.e - a.s > 900
+            if let b, !held, b.s - a.e <= 300, a.w.count + b.w.count <= 16, !(a.w.count >= 9 && b.w.count >= 9) {
+                rows.append(Row(a: i, b: i + 1, right: false)); i += 2; continue
+            }
+            let last = i == words.count - 1
+            let closeEnd = last && words.count > 1 && a.s - words[i - 1].e < 300
+            let prevLeftSingle = rows.last.map { $0.b == nil && !$0.right } ?? false
+            rows.append(Row(a: i, b: nil, right: (held && last) || closeEnd || prevLeftSingle)); i += 1
+        }
+        return rows
+    }
 
     /// Was steht gerade auf dem Display?
     static func state(_ lines: [LyricLine], _ ms: Double) -> State {
         guard !lines.isEmpty else { return .blank }
         var i = -1
-        for (k, l) in lines.enumerated() { if l.ms <= ms { i = k } else { break } }
+        for (k, l) in lines.enumerated() { if l.ms <= ms + 30 { i = k } else { break } }
         if i < 0 { return lines[0].ms - ms > 6000 && ms > 1500 ? .kao : .blank }
-        let line = lines[i], next: Double? = i + 1 < lines.count ? lines[i + 1].ms : nil
-        var pairs: [(String, Double)] = []
-        if let w = line.words, !w.isEmpty {
-            pairs = w.map { ($0.text, $0.ms) }
-        } else {
-            let raw = line.text.split(separator: " ").map(String.init)
-            let syl = raw.map(syllables), total = Double(max(1, syl.reduce(0, +)))
-            let dur = min((next ?? line.ms + 6000) - line.ms, total * 260 + 300)
-            var acc = 0.0
-            for (k, s) in syl.enumerated() { pairs.append((raw[k], line.ms + dur * acc / total)); acc += Double(s) }
-        }
-        pairs = pairs.filter { !$0.0.trimmingCharacters(in: .whitespaces).isEmpty }
-        guard let last = pairs.last else { return gap(ms, line.ms, next) }
-        let lastEnd = last.1 + 700
-        let hold = min(next.map { $0 - 280 } ?? .infinity, lastEnd + 2200)
-        if ms > hold { return gap(ms, lastEnd, next) }
-        return .line(words: pairs.map { $0.0.lowercased() }, shown: pairs.filter { $0.1 <= ms }.count)
+        let next: Double? = i + 1 < lines.count ? lines[i + 1].ms : nil
+        let words = timedWords(lines[i], next)
+        guard let last = words.last else { return gap(ms, lines[i].ms, next) }
+        let hold = min(next.map { $0 - 280 } ?? .infinity, last.e + 1800)
+        if ms > hold { return gap(ms, last.e, next) }
+        return .line(key: i, words: words.map { $0.w }, rows: pairRows(words), shown: words.filter { $0.s <= ms + 30 }.count)
     }
 
     private static func font(_ size: CGFloat) -> UIFont { UIFont(name: "HelveticaNeue-Medium", size: size) ?? .systemFont(ofSize: size, weight: .medium) }
     private static func width(_ s: String, _ f: UIFont) -> CGFloat { (s as NSString).size(withAttributes: [.font: f]).width }
 
-    /// Blocksatz wie im Video: Zeilen mit mehreren Wörtern gehen über die ganze Breite, ein einzelnes Wort steht links
-    private static func layout(_ words: [String], _ w: CGFloat, _ h: CGFloat) -> (CGFloat, [CGPoint]) {
-        let padX = w * 0.07, padY = h * 0.08, maxW = w - padX * 2
-        var F = (h / 6.6).rounded()
-        for _ in 0..<14 {
-            let f = font(F), space = F * 0.42
-            var rows: [[Int]] = [[]], cw: CGFloat = 0
-            for (k, wd) in words.enumerated() {
-                let ww = width(wd, f)
-                if !rows[rows.count - 1].isEmpty && cw + space + ww > maxW { rows.append([k]); cw = ww }
-                else { cw += (rows[rows.count - 1].isEmpty ? 0 : space) + ww; rows[rows.count - 1].append(k) }
-            }
-            let lh = F * 1.3
-            if (CGFloat(rows.count) * lh <= h - padY * 2 && words.allSatisfy { width($0, f) <= maxW }) || F < 12 {
-                var pos = Array(repeating: CGPoint.zero, count: words.count)
-                for (ri, r) in rows.enumerated() {
-                    let widths = r.map { width(words[$0], f) }, total = widths.reduce(0, +)
-                    let stretch = r.count > 1 && total + space * CGFloat(r.count - 1) > maxW * 0.55
-                    let g = r.count > 1 ? (maxW - total) / CGFloat(r.count - 1) : 0
-                    var x = padX
-                    for (j, k) in r.enumerated() { pos[k] = CGPoint(x: x, y: padY + CGFloat(ri) * lh + F * 0.86); x += widths[j] + (stretch ? g : space) }
-                }
-                return (F, pos)
-            }
-            F = (F * 0.9).rounded()
-        }
-        return (F, words.indices.map { CGPoint(x: padX, y: padY + F * CGFloat($0 + 1)) })
-    }
-
-    static func draw(_ ctx: inout GraphicsContext, _ size: CGSize, _ st: State) {
+    static func draw(_ ctx: inout GraphicsContext, _ size: CGSize, _ st: State, _ anim: Anim) {
         let W = size.width, H = size.height
         ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Color(red: 0.03, green: 0.03, blue: 0.045)))
         let b = min(W, H) * 0.035, rect = CGRect(x: b, y: b, width: W - 2 * b, height: H - 2 * b)
@@ -571,28 +570,44 @@ enum LCD {
         c.fill(screen, with: .radialGradient(Gradient(colors: [Color(red: 0.957, green: 0.973, blue: 1), Color(red: 0.886, green: 0.918, blue: 0.984), Color(red: 0.725, green: 0.784, blue: 0.902)]),
                                              center: CGPoint(x: rect.minX + rect.width * 0.48, y: rect.minY + rect.height * 0.42),
                                              startRadius: rect.height * 0.1, endRadius: hypot(rect.width, rect.height) * 0.62))
-        // feine LCD-Zeilen
         var scan = Path(), y = rect.minY
         while y < rect.maxY { scan.addRect(CGRect(x: rect.minX, y: y, width: rect.width, height: 0.5)); y += 1.5 }
         c.fill(scan, with: .color(Color(red: 0.27, green: 0.35, blue: 0.55).opacity(0.05)))
-        // Text (leicht weich wie auf einem echten LCD)
         var t = c
         t.addFilter(.blur(radius: 0.3))
         let ink = Color(red: 0.07, green: 0.08, blue: 0.11)
-        func put(_ words: [String], _ n: Int, _ alpha: Double = 1) {
-            let (F, pos) = layout(words, rect.width, rect.height)
-            for k in 0..<min(n, words.count) {
-                t.draw(Text(words[k]).font(.custom("HelveticaNeue-Medium", size: F)).foregroundColor(ink.opacity(alpha)),
-                       at: CGPoint(x: rect.minX + pos[k].x, y: rect.minY + pos[k].y + F * 0.22), anchor: .bottomLeading)
-            }
-        }
+        let padX = rect.width * 0.08, padY = rect.height * 0.1
+
+        var words: [String] = [], rows: [Row] = [], shown = 0, key = -2
         switch st {
-        case .line(let words, let shown): put(words, shown)
-        case .text(let words): put(words, words.count, 0.85)
+        case .line(let k, let w, let r, let s): words = w; rows = r; shown = s; key = k
+        case .text(let w): words = w; rows = pairRows(w.enumerated().map { Word(w: $1, s: Double($0) * 400, e: Double($0) * 400 + 300) }); shown = w.count
         case .kao: t.draw(Text(kao).font(.system(size: rect.height / 9, weight: .medium)).foregroundColor(ink), at: CGPoint(x: rect.midX, y: rect.minY + rect.height * 0.46))
         case .blank: break
         }
-        // leichter Glanz auf dem Glas
+        if !words.isEmpty {
+            // Schriftgröße: ~4 Zeilen, das längste Paar braucht noch einen Korridor von 22 % der Breite
+            var F = (rect.height / 7.2).rounded()
+            var f = font(F)
+            let need = rows.map { r in r.b.map { width(words[r.a], f) + width(words[$0], f) + rect.width * 0.22 } ?? width(words[r.a], f) }.max() ?? 1
+            let fit = min(1, (rect.width - padX * 2) / max(1, need))
+            if fit < 1 { F = (F * fit).rounded(.down); f = font(F) }
+            let lh = F * 1.34, maxRows = max(1, Int((rect.height - padY * 2 + F * 0.3) / lh))
+            let curRow = shown > 0 ? (rows.firstIndex { $0.a == shown - 1 || $0.b == shown - 1 } ?? 0) : 0
+            let target = Double(max(0, curRow + 1 - maxRows)), now = Date()
+            if anim.key != key { anim.key = key; anim.off = target }
+            anim.off += (target - anim.off) * min(1, now.timeIntervalSince(anim.t) * 10); anim.t = now
+            func put(_ k: Int, right: Bool, _ y: CGFloat) {
+                guard k < shown else { return }
+                let x = right ? rect.maxX - padX - width(words[k], f) : rect.minX + padX
+                t.draw(Text(words[k]).font(.custom("HelveticaNeue-Medium", size: F)).foregroundColor(ink), at: CGPoint(x: x, y: y + F * 0.22), anchor: .bottomLeading)
+            }
+            for (ri, r) in rows.enumerated() {
+                let y = rect.minY + padY + F * 0.9 + (CGFloat(ri) - CGFloat(anim.off)) * lh
+                if y < rect.minY - F || y > rect.maxY + F { continue }
+                if let bi = r.b { put(r.a, right: false, y); put(bi, right: true, y) } else { put(r.a, right: r.right, y) }
+            }
+        }
         c.fill(screen, with: .linearGradient(Gradient(colors: [.white.opacity(0.10), .clear, Color(red: 0.16, green: 0.24, blue: 0.43).opacity(0.08)]),
                                              startPoint: CGPoint(x: 0, y: rect.minY), endPoint: CGPoint(x: 0, y: rect.maxY)))
     }

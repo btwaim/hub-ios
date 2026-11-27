@@ -18,8 +18,10 @@ final class Lyrics: ObservableObject {
         return try? JSONDecoder().decode(LyricsResponse.self, from: d)
     }
     /// Ergebnis ohne getimte Zeilen nur einen Tag merken – vielleicht hat der PC inzwischen welche (Whisper-Timing)
-    private func isFresh(_ id: String) -> Bool {
+    /// ls = Stand des wort-genauen Timings am PC: ist er neuer als der Cache, werden die Lyrics neu geholt
+    private func isFresh(_ id: String, _ ls: Double? = nil) -> Bool {
         guard let r = cached(id) else { return false }
+        if let ls, ls > (r.stamp ?? 0) { return false }
         if !(r.lines ?? []).isEmpty { return true }
         let f = dir.appendingPathComponent("\(id).json")
         let age = (try? f.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate).map { Date().timeIntervalSince($0) } ?? .infinity
@@ -31,7 +33,7 @@ final class Lyrics: ObservableObject {
         if trackID == t.id && !lines.isEmpty { return }
         trackID = t.id
         if let r = cached(t.id) { lines = r.lines ?? []; plain = r.plain } else { lines = []; plain = nil }
-        if isFresh(t.id) { return }
+        if isFresh(t.id, t.ls) { return }
         loadingFor = t.id
         defer { if loadingFor == t.id { loadingFor = nil } }
         guard let r = try? await API.get("/api/lyrics/\(t.id)", timeout: 25, as: LyricsResponse.self), r.error == nil else { return }
@@ -65,7 +67,7 @@ final class Lyrics: ObservableObject {
     /// Ein Song ohne Lyrics bricht nicht mehr alles ab (vorher hörte es beim ersten Fehlschlag auf).
     func prefetch(_ tracks: [Track]) async {
         var fails = 0
-        for t in tracks where !isFresh(t.id) {
+        for t in tracks where !isFresh(t.id, t.ls) {
             guard let r = try? await API.get("/api/lyrics/\(t.id)", timeout: 25, as: LyricsResponse.self) else {
                 fails += 1
                 if fails >= 3 { return }       // PC weg → später weitermachen
