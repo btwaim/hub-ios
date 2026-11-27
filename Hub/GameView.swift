@@ -3,7 +3,8 @@ import WebKit
 import UIKit
 
 // Ashen Oath – das Spiel zu deinen Songs. Läuft als Web-Spiel (dasselbe wie am PC) in einer WKWebView:
-// hubgame://app/… liefert die Spieldateien aus dem App-Paket, hubgame://song/… deine offline gespeicherten Songs.
+// hubgame://app/… liefert die Spieldateien aus dem App-Paket, hubgame://song/… deine offline gespeicherten Songs,
+// hubgame://stream/<id> alle anderen Songs direkt vom PC (mit Hub-Sound, wie im Musik-Tab).
 // Spielstand (Gold, Ritter, Schmiede) wird mit dem PC zusammengeführt, sobald er erreichbar ist.
 
 struct GameScreen: View {
@@ -53,8 +54,12 @@ struct GameWebView: UIViewRepresentable {
 
 /// Liefert Spieldateien und Songs über ein eigenes Schema (gleicher Ursprung → Module/Audio ohne Sperren)
 final class GameScheme: NSObject, WKURLSchemeHandler {
+    private var stopped = Set<ObjectIdentifier>()
+    private static let streamCache: NSCache<NSString, NSData> = { let c = NSCache<NSString, NSData>(); c.totalCostLimit = 80_000_000; return c }()
+
     func webView(_ webView: WKWebView, start task: WKURLSchemeTask) {
         guard let url = task.request.url else { return }
+        if url.host == "stream" { stream(url, task); return }
         var file: URL?
         if url.host == "app", let root = Bundle.main.url(forResource: "Game", withExtension: nil) {
             let rel = url.path.isEmpty || url.path == "/" ? "index.html" : String(url.path.dropFirst())
@@ -68,8 +73,12 @@ final class GameScheme: NSObject, WKURLSchemeHandler {
             task.didFailWithError(URLError(.fileDoesNotExist))
             return
         }
+        respond(task, url, data, f.pathExtension.lowercased())
+    }
+
+    private func respond(_ task: WKURLSchemeTask, _ url: URL, _ data: Data, _ ext: String) {
         let types = ["html": "text/html; charset=utf-8", "js": "text/javascript; charset=utf-8", "json": "application/json", "m4a": "audio/mp4", "mp3": "audio/mpeg", "png": "image/png"]
-        let mime = types[f.pathExtension.lowercased()] ?? "application/octet-stream"
+        let mime = types[ext] ?? "application/octet-stream"
         let resp = HTTPURLResponse(url: url, statusCode: 200, httpVersion: "HTTP/1.1",
                                    headerFields: ["Content-Type": mime, "Content-Length": "\(data.count)", "Cache-Control": "no-cache"])!
         task.didReceive(resp)
@@ -77,7 +86,32 @@ final class GameScheme: NSObject, WKURLSchemeHandler {
         task.didFinish()
     }
 
-    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) {}
+    func webView(_ webView: WKWebView, stop task: WKURLSchemeTask) { stopped.insert(ObjectIdentifier(task)) }
+
+    /// Song vom PC holen (gleiche Adresse wie das Streamen im Musik-Tab), zwischengespeichert für Menü-Musik + Runde
+    private func stream(_ url: URL, _ task: WKURLSchemeTask) {
+        let id = url.lastPathComponent
+        if let d = Self.streamCache.object(forKey: id as NSString) { respond(task, url, d as Data, "m4a"); return }
+        let remote: URL? = MainActor.assumeIsolated {
+            let lib = Library.shared
+            return lib.tracks.first { $0.id == id }.flatMap { lib.streamURL($0) }
+        }
+        guard let remote else { task.didFailWithError(URLError(.fileDoesNotExist)); return }
+        var req = URLRequest(url: remote)
+        req.timeoutInterval = 120
+        let key = ObjectIdentifier(task)
+        API.session.dataTask(with: req) { [weak self] data, resp, _ in
+            DispatchQueue.main.async {
+                guard let self, !self.stopped.contains(key) else { return }
+                if let data, (resp as? HTTPURLResponse)?.statusCode == 200, !data.isEmpty {
+                    Self.streamCache.setObject(data as NSData, forKey: id as NSString, cost: data.count)
+                    self.respond(task, url, data, "m4a")
+                } else {
+                    task.didFailWithError(URLError(.cannotLoadFromNetwork))
+                }
+            }
+        }.resume()
+    }
 }
 
 /// Nachrichten vom Spiel (window.webkit.messageHandlers.host.postMessage) mit Antwort
@@ -105,10 +139,13 @@ final class GameBridge: NSObject, WKScriptMessageHandlerWithReply {
     /// offline gespeicherte Songs (schon im Hub-Sound) – Main = deine Rotation
     private func songs() -> [[String: Any]] {
         let lib = Library.shared
+        // offline gespeicherte direkt vom Handy, alle anderen vom PC (wenn erreichbar)
         return lib.tracks.compactMap { t in
-            guard let local = lib.localFile(t) else { return nil }
-            return ["id": t.id, "title": t.title, "artist": t.artist, "main": t.main ?? false, "duration": t.duration ?? 0,
-                    "baked": true, "url": "hubgame://song/\(local.url.lastPathComponent)"]
+            var d: [String: Any] = ["id": t.id, "title": t.title, "artist": t.artist, "main": t.main ?? false, "duration": t.duration ?? 0, "baked": true]
+            if let local = lib.localFile(t) { d["url"] = "hubgame://song/\(local.url.lastPathComponent)"; d["offline"] = true }
+            else if lib.pcOnline { d["url"] = "hubgame://stream/\(t.id)"; d["offline"] = false }
+            else { return nil }
+            return d
         }
     }
 
