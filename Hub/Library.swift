@@ -115,6 +115,7 @@ final class Library: ObservableObject {
             pcOnline = false
         }
         guard pcOnline else { return }
+        await GameBridge.syncInBackground()   // Ashen Oath: Spielstand mit dem PC abgleichen
         if !pending.isEmpty { await pushPending(); return }
         await loadHubState()
         await sync()

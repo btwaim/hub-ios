@@ -170,6 +170,22 @@ final class GameBridge: NSObject, WKScriptMessageHandlerWithReply {
         return String(data: local, encoding: .utf8) ?? "null"
     }
 
+    /// Ashen Oath: Spielstand bei jedem Kontakt zum PC abgleichen – auch ohne dass das Spiel offen ist (PC und iPhone immer gleich)
+    @MainActor static func syncInBackground() async {
+        let file = Store.support.appendingPathComponent("ashen-oath.json")
+        let local = (try? Data(contentsOf: file)).flatMap { try? JSONSerialization.jsonObject(with: $0) }
+        guard let url = Config.url("/api/game"), let body = try? JSONSerialization.data(withJSONObject: ["save": local ?? NSNull()]) else { return }
+        var r = URLRequest(url: url)
+        r.httpMethod = "POST"
+        r.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        r.httpBody = body
+        r.timeoutInterval = 6
+        if let (data, resp) = try? await API.session.data(for: r), (resp as? HTTPURLResponse)?.statusCode == 200,
+           let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any], obj["error"] == nil, obj["v"] != nil {
+            try? data.write(to: file, options: .atomic)
+        }
+    }
+
     static func json(_ v: Any) -> String {
         guard let d = try? JSONSerialization.data(withJSONObject: v) else { return "null" }
         return String(data: d, encoding: .utf8) ?? "null"
